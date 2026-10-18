@@ -1,0 +1,15 @@
+[build-system]
+requires = ["setuptools>=61"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "agent-try"
+version = "0.1.0"
+description = "A small Python agent learning project"
+requires-python = ">=3.10"
+
+[project.scripts]
+agent-try = "agent_try.__main__:main"
+
+[tool.setuptools.packages.find]
+include = ["agent_try*"]
