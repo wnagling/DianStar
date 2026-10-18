@@ -13,6 +13,7 @@ from httpx import Request
 from openai import APIConnectionError
 
 from agent_try.__main__ import main
+from agent_try.conversations import Conversation
 from agent_try.deepseek import ask_deepseek
 
 
@@ -124,18 +125,79 @@ class DeepSeekTests(unittest.IsolatedAsyncioTestCase):
 
     def test_no_argument_enters_chat_and_exit_stops(self):
         stdout = io.StringIO()
-        with (
-            patch.object(sys, "argv", ["agent_try"]),
-            patch("builtins.input", side_effect=["Hello", "/exit"]),
-            patch("agent_try.__main__.ask_deepseek", new_callable=AsyncMock, return_value="Hi") as ask,
-            redirect_stdout(stdout),
-        ):
-            result = main()
+        with tempfile.TemporaryDirectory() as temporary:
+            conversation = Conversation.create(Path(temporary))
+            with (
+                patch.object(sys, "argv", ["agent_try"]),
+                patch("builtins.input", side_effect=["Hello", "/exit"]),
+                patch("agent_try.__main__.Conversation.create", return_value=conversation),
+                patch("agent_try.__main__.ask_deepseek", new_callable=AsyncMock, return_value="Hi") as ask,
+                redirect_stdout(stdout),
+            ):
+                result = main()
+
+            restored = Conversation.load(conversation.id, Path(temporary))
 
         self.assertEqual(result, 0)
         ask.assert_awaited_once()
         self.assertEqual(ask.await_args.args, ("Hello",))
         self.assertIn("DeepSeek> Hi", stdout.getvalue())
+        self.assertEqual(restored.messages[-1], {"role": "assistant", "content": "Hi"})
+
+    def test_compress_keeps_record_but_clears_model_context_after_resume(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            directory = Path(temporary)
+            conversation = Conversation.create(directory)
+            conversation.add_exchange("First", "Answer")
+            conversation.compress()
+            restored = Conversation.load(conversation.id, directory)
+
+            self.assertEqual(len(restored.messages), 2)
+            self.assertEqual(restored.context_messages(), [])
+            restored.add_exchange("New", "Reply")
+            restored_again = Conversation.load(conversation.id, directory)
+            self.assertEqual(restored_again.context_messages(), [
+                {"role": "user", "content": "New"},
+                {"role": "assistant", "content": "Reply"},
+            ])
+
+    def test_conversation_ids_are_unique_and_invalid_resume_id_is_rejected(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            directory = Path(temporary)
+            first = Conversation.create(directory)
+            second = Conversation.create(directory)
+            self.assertNotEqual(first.id, second.id)
+            with self.assertRaisesRegex(ValueError, "Invalid conversation ID"):
+                Conversation.load("../.env", directory)
+
+    def test_resume_compress_and_new_route_questions_to_separate_sessions(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            directory = Path(temporary)
+            old = Conversation.create(directory)
+            old.add_exchange("Old question", "Old answer")
+            new = Conversation.create(directory)
+            with (
+                patch.object(sys, "argv", ["agent_try", "--resume", old.id]),
+                patch("builtins.input", side_effect=[
+                    "/clear", "/compress", "After compress", "/new", "Fresh question", "/exit"
+                ]),
+                patch("agent_try.__main__.Conversation.load", return_value=old),
+                patch("agent_try.__main__.Conversation.create", return_value=new),
+                patch("agent_try.__main__.ask_deepseek", new_callable=AsyncMock,
+                      side_effect=["After answer", "Fresh answer"]) as ask,
+                redirect_stdout(io.StringIO()),
+            ):
+                result = main()
+
+            old_restored = Conversation.load(old.id, directory)
+            new_restored = Conversation.load(new.id, directory)
+
+        self.assertEqual(result, 0)
+        self.assertEqual(ask.await_count, 2)
+        self.assertEqual(ask.await_args_list[0].kwargs["history"], [])
+        self.assertEqual(ask.await_args_list[1].kwargs["history"], [])
+        self.assertEqual(old_restored.context_messages()[-1]["content"], "After answer")
+        self.assertEqual(new_restored.messages[0]["content"], "Fresh question")
 
 
 if __name__ == "__main__":
