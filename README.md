@@ -21,6 +21,8 @@ python -m agent_try --help
 python -m agent_try "请用一句话介绍你自己。"
 ```
 
+在 VS Code 中打开整个 `agentTry` 文件夹，选择已安装依赖的 Python 解释器，然后在“运行和调试”中选择“agentTry：提问 DeepSeek”，按 F5 并输入问题。此配置以模块方式启动程序；直接点击 `__main__.py` 的“运行 Python 文件”按钮仍会把它当作独立脚本运行。
+
 如果当前 PowerShell 的中文输出显示为乱码，可在运行前设置 `$env:PYTHONIOENCODING='utf-8'`。
 
 `.env` 的格式可参考 [.env.example](./.env.example)：只需将等号右侧替换为你的密钥。程序默认请求 `deepseek-flash`，每次运行发送一个问题、接收一个回答，不保存对话历史。整次请求设置 60 秒总时限，SDK 自动重试已关闭；出错时以失败状态退出，且不打印密钥。
@@ -33,6 +35,7 @@ python -m agent_try "请用一句话介绍你自己。"
 agent_try/__main__.py   命令行入口和错误提示
 agent_try/deepseek.py   单次 DeepSeek SDK 请求
 agent_try/__init__.py   Python 包
+.vscode/launch.json     VS Code 模块运行配置
 pyproject.toml          项目元数据和依赖
 .env                    本地密钥文件，不进入 Git
 .env.example            不含真实密钥的格式示例

@@ -1,0 +1,25 @@
+{
+  "version": "0.2.0",
+  "configurations": [
+    {
+      "name": "agentTry：提问 DeepSeek",
+      "type": "debugpy",
+      "request": "launch",
+      "module": "agent_try",
+      "cwd": "${workspaceFolder}",
+      "args": ["${input:question}"],
+      "console": "integratedTerminal",
+      "env": {
+        "PYTHONIOENCODING": "utf-8"
+      }
+    }
+  ],
+  "inputs": [
+    {
+      "id": "question",
+      "type": "promptString",
+      "description": "请输入要问 DeepSeek 的问题",
+      "default": "你好"
+    }
+  ]
+}
