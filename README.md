@@ -1,10 +1,10 @@
 # agentTry
 
-agentTry 是一个学习和构建本地 Agent 的项目。长期方向见 [产品文档](./产品文档.md)。当前阶段先通过 SDK 完成一次 DeepSeek 问答，再逐步扩展为对项目自身的只读分析。
+agentTry 是一个学习和构建本地 Agent 的项目。长期方向见 [产品文档](./产品文档.md)。当前阶段已通过 SDK 完成 DeepSeek 问答，下一步逐步扩展为对项目自身的只读分析。
 
 ## 当前状态
 
-- 已有：Python 命令行入口、从本地 `.env` 读取密钥、单次 DeepSeek 问答代码。
+- 已有：Python 命令行入口、从本地 `.env` 读取密钥、单次问答和终端连续对话。
 - 未有：`list_files` / `read_file` 工具和工具调用循环。当前模型无法读取项目文件，回答不能作为项目事实的依据。
 - 验收：2026-10-18 已完成一次真实 DeepSeek 单次问答，结果见 [开发日志](./开发日志/2026-10-18.md)。
 - 暂不实现：文件修改、命令执行、记忆、多 Agent 调度和外部 Agent 接入。
@@ -18,14 +18,17 @@ agentTry 是一个学习和构建本地 Agent 的项目。长期方向见 [产�
 ```powershell
 python -m pip install -e .
 python -m agent_try --help
+python -m agent_try
 python -m agent_try "请用一句话介绍你自己。"
 ```
 
-在 VS Code 中打开整个 `agentTry` 文件夹，选择已安装依赖的 Python 解释器，然后在“运行和调试”中选择“agentTry：提问 DeepSeek”，按 F5 并输入问题。此配置以模块方式启动程序；直接点击 `__main__.py` 的“运行 Python 文件”按钮仍会把它当作独立脚本运行。
+不带问题启动后，可在终端连续输入；`/clear` 清空上下文，`/exit` 退出。历史只保存在当前进程内存中，退出即丢失；每轮请求会重新发送已有对话，因此长对话会增加请求内容和费用。请求失败的轮次不加入历史。
+
+在 VS Code 中打开整个 `agentTry` 文件夹，选择已安装依赖的 Python 解释器，然后在“运行和调试”中选择“agentTry：连续对话”，按 F5。单次问答仍可选“agentTry：提问 DeepSeek”。这两个配置都以模块方式启动程序；直接点击 `__main__.py` 的“运行 Python 文件”按钮仍会把它当作独立脚本运行。
 
 如果当前 PowerShell 的中文输出显示为乱码，可在运行前设置 `$env:PYTHONIOENCODING='utf-8'`。
 
-`.env` 的格式可参考 [.env.example](./.env.example)：只需将等号右侧替换为你的密钥。程序默认请求 `deepseek-flash`，每次运行发送一个问题、接收一个回答，不保存对话历史。整次请求设置 60 秒总时限，SDK 自动重试已关闭；出错时以失败状态退出，且不打印密钥。
+`.env` 的格式可参考 [.env.example](./.env.example)：只需将等号右侧替换为你的密钥。程序默认请求 `deepseek-flash`。每轮请求设置 60 秒总时限，SDK 自动重试已关闭；出错时不打印密钥。单次问答以失败状态退出；连续对话会提示错误并允许继续输入。
 
 离线检查：`python -m unittest discover -s tests`。它使用模拟回复；真实 API 的单次问答已另行验证，见上面的开发日志。
 

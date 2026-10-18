@@ -1,4 +1,4 @@
-"""Send one question to DeepSeek using its OpenAI-compatible API."""
+"""Send a question and optional conversation history to DeepSeek."""
 
 import asyncio
 from pathlib import Path
@@ -13,8 +13,13 @@ MODEL = "deepseek-flash"
 BASE_URL = "https://api.deepseek.com"
 
 
-async def ask_deepseek(question: str, *, env_file: Path = ENV_FILE) -> str:
-    """Read the local key, make one request, and return the answer text."""
+async def ask_deepseek(
+    question: str,
+    *,
+    history: list[dict[str, str]] | None = None,
+    env_file: Path = ENV_FILE,
+) -> str:
+    """Make one request and add a successful exchange to in-memory history."""
     if not question.strip():
         raise ValueError("Please provide a question.")
     if not env_file.is_file():
@@ -24,6 +29,7 @@ async def ask_deepseek(question: str, *, env_file: Path = ENV_FILE) -> str:
     if not api_key:
         raise ValueError("Set DEEPSEEK_API_KEY in the project .env file.")
 
+    messages = [*(history or []), {"role": "user", "content": question}]
     client = AsyncOpenAI(
         api_key=api_key,
         base_url=BASE_URL,
@@ -34,7 +40,7 @@ async def ask_deepseek(question: str, *, env_file: Path = ENV_FILE) -> str:
         response = await asyncio.wait_for(
             client.chat.completions.create(
                 model=MODEL,
-                messages=[{"role": "user", "content": question}],
+                messages=messages,
                 stream=False,
             ),
             timeout=60.0,
@@ -45,4 +51,7 @@ async def ask_deepseek(question: str, *, env_file: Path = ENV_FILE) -> str:
     choice = response.choices[0]
     if choice.finish_reason != "stop" or not choice.message.content:
         raise ValueError("DeepSeek did not return a complete text answer.")
-    return choice.message.content
+    answer = choice.message.content
+    if history is not None:
+        history.extend(({"role": "user", "content": question}, {"role": "assistant", "content": answer}))
+    return answer

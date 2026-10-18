@@ -1,10 +1,10 @@
-"""Offline checks for the first DeepSeek SDK call."""
+"""Offline checks for DeepSeek questions and interactive chat."""
 
 import io
 import sys
 import tempfile
 import unittest
-from contextlib import redirect_stderr
+from contextlib import redirect_stderr, redirect_stdout
 from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import AsyncMock, patch
@@ -57,6 +57,55 @@ class DeepSeekTests(unittest.IsolatedAsyncioTestCase):
             stream=False,
         )
 
+    @patch("agent_try.deepseek.AsyncOpenAI")
+    async def test_follow_up_sends_prior_successful_exchange(self, client_class):
+        with tempfile.TemporaryDirectory() as temporary:
+            env_file = Path(temporary) / ".env"
+            env_file.write_text("DEEPSEEK_API_KEY=test-key\n", encoding="utf-8")
+            client = client_class.return_value
+            client.chat.completions.create = AsyncMock(side_effect=[
+                SimpleNamespace(choices=[SimpleNamespace(
+                    finish_reason="stop", message=SimpleNamespace(content="First answer")
+                )]),
+                SimpleNamespace(choices=[SimpleNamespace(
+                    finish_reason="stop", message=SimpleNamespace(content="Second answer")
+                )]),
+            ])
+            history = []
+
+            await ask_deepseek("First question", history=history, env_file=env_file)
+            await ask_deepseek("Follow up", history=history, env_file=env_file)
+
+        self.assertEqual(client.chat.completions.create.await_args_list[1].kwargs["messages"], [
+            {"role": "user", "content": "First question"},
+            {"role": "assistant", "content": "First answer"},
+            {"role": "user", "content": "Follow up"},
+        ])
+        self.assertEqual(history[-1], {"role": "assistant", "content": "Second answer"})
+
+    @patch("agent_try.deepseek.AsyncOpenAI")
+    async def test_failed_turn_does_not_enter_history(self, client_class):
+        with tempfile.TemporaryDirectory() as temporary:
+            env_file = Path(temporary) / ".env"
+            env_file.write_text("DEEPSEEK_API_KEY=test-key\n", encoding="utf-8")
+            client = client_class.return_value
+            client.chat.completions.create = AsyncMock(side_effect=[
+                SimpleNamespace(choices=[]),
+                SimpleNamespace(choices=[SimpleNamespace(
+                    finish_reason="stop", message=SimpleNamespace(content="Recovered")
+                )]),
+            ])
+            history = []
+
+            with self.assertRaisesRegex(ValueError, "no answer"):
+                await ask_deepseek("Failed question", history=history, env_file=env_file)
+            self.assertEqual(history, [])
+            await ask_deepseek("Retry", history=history, env_file=env_file)
+
+        self.assertEqual(client.chat.completions.create.await_args_list[1].kwargs["messages"], [
+            {"role": "user", "content": "Retry"},
+        ])
+
     def test_connection_error_returns_failure_without_request_details(self):
         error = APIConnectionError(
             message="request contained a sensitive value",
@@ -72,6 +121,21 @@ class DeepSeekTests(unittest.IsolatedAsyncioTestCase):
 
         self.assertEqual(result, 1)
         self.assertEqual(stderr.getvalue(), "Error: Could not connect to DeepSeek.\n")
+
+    def test_no_argument_enters_chat_and_exit_stops(self):
+        stdout = io.StringIO()
+        with (
+            patch.object(sys, "argv", ["agent_try"]),
+            patch("builtins.input", side_effect=["Hello", "/exit"]),
+            patch("agent_try.__main__.ask_deepseek", new_callable=AsyncMock, return_value="Hi") as ask,
+            redirect_stdout(stdout),
+        ):
+            result = main()
+
+        self.assertEqual(result, 0)
+        ask.assert_awaited_once()
+        self.assertEqual(ask.await_args.args, ("Hello",))
+        self.assertIn("DeepSeek> Hi", stdout.getvalue())
 
 
 if __name__ == "__main__":
