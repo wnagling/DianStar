@@ -53,7 +53,7 @@ def main() -> int:
     print("与 DeepSeek 连续对话；输入 /exit 退出，/clear 清空上下文。")
     while True:
         try:
-            question = input("你> ").strip()
+            question = input("主包> ").strip()
         except (EOFError, KeyboardInterrupt):
             print()
             break
