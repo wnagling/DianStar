@@ -87,8 +87,7 @@ def _format_weather(weather: dict[str, object]) -> str:
         if weather["temperature_current_c"] is None:
             lines.append("当前气温暂不可用。")
         else:
-            local_time = str(weather["current_time"])[11:16]
-            lines.append(f"当前气温约 {weather['temperature_current_c']}°C（当地时间 {local_time}，模型估计）。")
+            lines.append(f"当前气温约 {weather['temperature_current_c']}°C。")
     lines.append(f"当日最高 {weather['temperature_max_c']}°C，最低 {weather['temperature_min_c']}°C。")
     return "\n".join(lines)
 

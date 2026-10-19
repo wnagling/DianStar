@@ -36,7 +36,7 @@ python -m agent_try "请用一句话介绍你自己。"
 
 ## 天气工具
 
-例如运行 `python -m agent_try "北京明天的最高和最低气温是多少？"`。模型会提取地点和日期，调用 `agent_try/tools/weather.py` 中的 `get_weather(location, date)`；程序核对工具结果后直接格式化回答。首版支持目的地当地的今天及之后 7 天；查询今天时返回带当地时间的当前气温，以及当日最高、最低气温；查询未来日期时只返回最高、最低气温。`date` 可用 `today`、`tomorrow` 或 `YYYY-MM-DD`。重名地点如果无法可靠区分，会要求补充地区或国家。没有地点或日期时应先补充信息。
+例如运行 `python -m agent_try "北京明天的最高和最低气温是多少？"`。模型会提取地点和日期，调用 `agent_try/tools/weather.py` 中的 `get_weather(location, date)`；程序核对工具结果后直接格式化回答。首版支持目的地当地的今天及之后 7 天；查询今天时返回当前气温，以及当日最高、最低气温；查询未来日期时只返回最高、最低气温。终端回答不显示当前气温对应的时间。`date` 可用 `today`、`tomorrow` 或 `YYYY-MM-DD`。重名地点如果无法可靠区分，会要求补充地区或国家。没有地点或日期时应先补充信息。
 
 天气数据来自 [Open-Meteo](https://open-meteo.com/)，城市名称通过其 [Geocoding API](https://open-meteo.com/en/docs/geocoding-api) 解析；最高、最低气温是[预报](https://open-meteo.com/en/docs)，当前气温也是模型估计值，并非温度计实测值。当前气温缺失时会明确提示暂不可用。查询需要联网，失败时程序会提示错误。其免费接口仅供非商业使用；商业使用请先检查其[服务条款](https://open-meteo.com/en/terms)。这项功能不读取设备位置，也不根据公网 IP 猜测城市。
 
