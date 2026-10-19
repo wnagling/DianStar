@@ -7,7 +7,12 @@ name = "agent-try"
 version = "0.1.0"
 description = "A small Python agent learning project"
 requires-python = ">=3.10"
-dependencies = ["openai>=1.58,<4", "python-dotenv>=1.0,<2"]
+dependencies = [
+    "openai>=1.58,<4",
+    "python-dotenv>=1.0,<2",
+    "winrt-Windows.Devices.Geolocation==3.2.1; sys_platform == 'win32'",
+    "winrt-Windows.Foundation==3.2.1; sys_platform == 'win32'",
+]
 
 [project.scripts]
 agent-try = "agent_try.__main__:main"

@@ -10,10 +10,21 @@ from .conversations import Conversation, list_conversation_ids
 from .deepseek import ask_deepseek
 
 
+def _approve_location() -> bool:
+    try:
+        answer = input("允许读取设备位置并将坐标发送给 DeepSeek 吗？[y/N] ")
+    except (EOFError, KeyboardInterrupt):
+        print()
+        return False
+    return answer.strip().lower() in {"y", "yes", "是"}
+
+
 def _answer(question: str, conversation: Conversation | None = None) -> bool:
     try:
         history = conversation.context_messages() if conversation is not None else None
-        answer = asyncio.run(ask_deepseek(question, history=history))
+        answer = asyncio.run(ask_deepseek(
+            question, history=history, approve_location=_approve_location
+        ))
     except ValueError as error:
         print(f"Error: {error}", file=sys.stderr)
         return False
