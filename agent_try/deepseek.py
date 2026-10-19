@@ -20,7 +20,7 @@ WEATHER_TOOL = {
     "type": "function",
     "function": {
         "name": "get_weather",
-        "description": "Get a city's forecast high and low temperature in Celsius for one local date. Ask for a city and date if missing. The date must be today, tomorrow, or YYYY-MM-DD within the next 7 days. Do not guess a missing city.",
+        "description": "Get a city's temperature in Celsius. For today, returns current modeled temperature with its local time plus the day's forecast high and low; future dates return forecast high and low. Ask for a city and date if missing. The date must be today, tomorrow, or YYYY-MM-DD within the next 7 days. Do not guess a missing city.",
         "parameters": {
             "type": "object",
             "properties": {
@@ -82,12 +82,15 @@ def _parse_unparsed_weather_call(content: str) -> dict[str, str]:
 
 
 def _format_weather(weather: dict[str, object]) -> str:
-    return (
-        f"{weather['location']} {weather['date']}："
-        f"最高 {weather['temperature_max_c']}°C，"
-        f"最低 {weather['temperature_min_c']}°C。"
-        "数据来源：Open-Meteo 天气预报。"
-    )
+    lines = [f"{weather['location']} {weather['date']}："]
+    if "temperature_current_c" in weather:
+        if weather["temperature_current_c"] is None:
+            lines.append("当前气温暂不可用。")
+        else:
+            local_time = str(weather["current_time"])[11:16]
+            lines.append(f"当前气温约 {weather['temperature_current_c']}°C（当地时间 {local_time}，模型估计）。")
+    lines.append(f"当日最高 {weather['temperature_max_c']}°C，最低 {weather['temperature_min_c']}°C。")
+    return "\n".join(lines)
 
 
 def _usable_history(history: list[dict[str, str]] | None) -> list[dict[str, str]]:

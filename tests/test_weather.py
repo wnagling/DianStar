@@ -33,15 +33,32 @@ class WeatherTests(unittest.IsolatedAsyncioTestCase):
         today = dt.datetime.now(ZoneInfo("Asia/Shanghai")).date().isoformat()
         get_json.side_effect = [
             {"results": [PLACE]},
-            {"daily": {"time": [today], "temperature_2m_max": [21.4], "temperature_2m_min": [9.2]}},
+            {
+                "daily": {"time": [today], "temperature_2m_max": [21.4], "temperature_2m_min": [9.2]},
+                "current": {"time": f"{today}T14:15", "temperature_2m": 18.3},
+            },
         ]
         result = await get_weather("北京", "today")
         self.assertEqual(result["date"], today)
         self.assertEqual(result["temperature_max_c"], 21.4)
         self.assertEqual(result["temperature_min_c"], 9.2)
+        self.assertEqual(result["temperature_current_c"], 18.3)
+        self.assertEqual(result["current_time"], f"{today}T14:15")
         self.assertEqual(get_json.await_args_list[0].args[0], GEOCODING_URL)
         self.assertEqual(get_json.await_args_list[1].args[0], FORECAST_URL)
         self.assertEqual(get_json.await_args_list[1].args[1]["timezone"], "Asia/Shanghai")
+        self.assertEqual(get_json.await_args_list[1].args[1]["current"], "temperature_2m")
+
+    @patch("agent_try.tools.weather._get_json", new_callable=AsyncMock)
+    async def test_future_date_has_no_current_temperature(self, get_json):
+        tomorrow = (dt.datetime.now(ZoneInfo("Asia/Shanghai")).date() + dt.timedelta(days=1)).isoformat()
+        get_json.side_effect = [
+            {"results": [PLACE]},
+            {"daily": {"time": [tomorrow], "temperature_2m_max": [22], "temperature_2m_min": [10]}},
+        ]
+        result = await get_weather("北京", "tomorrow")
+        self.assertNotIn("temperature_current_c", result)
+        self.assertNotIn("current", get_json.await_args_list[1].args[1])
 
     @patch("agent_try.tools.weather._get_json", new_callable=AsyncMock)
     async def test_date_outside_window_stops_before_forecast(self, get_json):

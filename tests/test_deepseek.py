@@ -80,9 +80,10 @@ class DeepSeekTests(unittest.IsolatedAsyncioTestCase):
             env_file.write_text("DEEPSEEK_API_KEY=test-key\n", encoding="utf-8")
             answer = await ask_deepseek("北京明天气温？", env_file=env_file)
         self.assertIn("18", answer)
+        self.assertNotIn("当前气温", answer)
         weather.assert_awaited_once_with("北京", "2026-10-20")
         client.chat.completions.create.assert_awaited_once()
-        self.assertIn("Open-Meteo", answer)
+        self.assertNotIn("数据来源", answer)
 
     @patch("agent_try.deepseek.AsyncOpenAI")
     async def test_incomplete_raw_dsml_is_rejected(self, client_class):
@@ -107,6 +108,7 @@ class DeepSeekTests(unittest.IsolatedAsyncioTestCase):
         weather.return_value = {
             "location": "潮州, 广东, 中国", "date": "2026-10-19",
             "temperature_max_c": 27.0, "temperature_min_c": 20.0,
+            "temperature_current_c": 25.2, "current_time": "2026-10-19T14:15",
         }
         raw = (
             '<｜｜DSML｜｜ calls><｜｜DSML｜｜ invoke name="get_weather">'
@@ -124,6 +126,9 @@ class DeepSeekTests(unittest.IsolatedAsyncioTestCase):
             history = []
             answer = await ask_deepseek("潮州今天天气多少度？", history=history, env_file=env_file)
         self.assertIn("27.0°C", answer)
+        self.assertIn("当前气温约 25.2°C", answer)
+        self.assertIn("14:15", answer)
+        self.assertNotIn("数据来源", answer)
         self.assertNotIn("DSML", answer)
         self.assertNotIn("DSML", repr(history))
         weather.assert_awaited_once_with("潮州, 广东, 中国", "today")

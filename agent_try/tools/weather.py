@@ -83,7 +83,7 @@ async def get_weather(location: str, date: str) -> dict[str, object]:
         raise WeatherUnavailable("Date must be today or within the next 7 local days.")
     date = requested_day.isoformat()
 
-    forecast = await _get_json(FORECAST_URL, {
+    forecast_params = {
         "latitude": latitude,
         "longitude": longitude,
         "daily": "temperature_2m_max,temperature_2m_min",
@@ -91,7 +91,10 @@ async def get_weather(location: str, date: str) -> dict[str, object]:
         "start_date": date,
         "end_date": date,
         "temperature_unit": "celsius",
-    })
+    }
+    if requested_day == today:
+        forecast_params["current"] = "temperature_2m"
+    forecast = await _get_json(FORECAST_URL, forecast_params)
     try:
         daily = forecast["daily"]
         if daily["time"] != [date]:
@@ -100,10 +103,22 @@ async def get_weather(location: str, date: str) -> dict[str, object]:
         minimum = float(daily["temperature_2m_min"][0])
     except (KeyError, IndexError, TypeError, ValueError) as error:
         raise WeatherUnavailable("Forecast temperatures are unavailable for that date.") from error
-    return {
+    result = {
         "location": ", ".join(filter(None, (place.get("name"), place.get("admin1"), place.get("country")))),
         "date": date,
         "temperature_max_c": maximum,
         "temperature_min_c": minimum,
         "source": "Open-Meteo forecast",
     }
+    if requested_day == today:
+        current = forecast.get("current") or {}
+        try:
+            current_time = current["time"]
+            if not isinstance(current_time, str) or current_time[:10] != date:
+                raise ValueError("Current time does not match local date")
+            result["temperature_current_c"] = float(current["temperature_2m"])
+            result["current_time"] = current_time
+        except (KeyError, TypeError, ValueError):
+            result["temperature_current_c"] = None
+            result["current_time"] = None
+    return result

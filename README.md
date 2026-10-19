@@ -4,7 +4,7 @@ agentTry 是一个学习和构建本地 Agent 的项目。长期方向见 [产�
 
 ## 当前状态
 
-- 已有：Python 命令行入口、从本地 `.env` 读取密钥、单次问答、可保存并恢复的终端连续对话，以及查询城市未来 7 天最高、最低气温的工具。
+- 已有：Python 命令行入口、从本地 `.env` 读取密钥、单次问答、可保存并恢复的终端连续对话，以及查询城市当前气温和未来 7 天最高、最低气温的工具。
 - 未有：`list_files` / `read_file` 文件工具。当前模型无法读取项目文件，回答不能作为项目事实的依据。
 - 验收：2026-10-18 已完成真实 DeepSeek 单次问答；2026-10-19 已完成真实天气工具调用，结果见 [开发日志](./开发日志/2026-10-19.md)。
 - 暂不实现：文件修改、命令执行、记忆、多 Agent 调度和外部 Agent 接入。
@@ -36,9 +36,11 @@ python -m agent_try "请用一句话介绍你自己。"
 
 ## 天气工具
 
-例如运行 `python -m agent_try "北京明天的最高和最低气温是多少？"`。模型会提取地点和日期，调用 `agent_try/tools/weather.py` 中的 `get_weather(location, date)`；程序核对工具结果后直接格式化回答。首版支持目的地当地的今天及之后 7 天；返回摄氏度的日最高、最低气温和解析到的城市。`date` 可用 `today`、`tomorrow` 或 `YYYY-MM-DD`。重名地点如果无法可靠区分，会要求补充地区或国家。没有地点或日期时应先补充信息。
+例如运行 `python -m agent_try "北京明天的最高和最低气温是多少？"`。模型会提取地点和日期，调用 `agent_try/tools/weather.py` 中的 `get_weather(location, date)`；程序核对工具结果后直接格式化回答。首版支持目的地当地的今天及之后 7 天；查询今天时返回带当地时间的当前气温，以及当日最高、最低气温；查询未来日期时只返回最高、最低气温。`date` 可用 `today`、`tomorrow` 或 `YYYY-MM-DD`。重名地点如果无法可靠区分，会要求补充地区或国家。没有地点或日期时应先补充信息。
 
-天气数据来自 [Open-Meteo](https://open-meteo.com/)，城市名称通过其 [Geocoding API](https://open-meteo.com/en/docs/geocoding-api) 解析；返回的是[预报](https://open-meteo.com/en/docs)，并非实测值。查询需要联网，失败时程序会提示错误。其免费接口仅供非商业使用；商业使用请先检查其[服务条款](https://open-meteo.com/en/terms)。这项功能不读取设备位置，也不根据公网 IP 猜测城市。
+天气数据来自 [Open-Meteo](https://open-meteo.com/)，城市名称通过其 [Geocoding API](https://open-meteo.com/en/docs/geocoding-api) 解析；最高、最低气温是[预报](https://open-meteo.com/en/docs)，当前气温也是模型估计值，并非温度计实测值。当前气温缺失时会明确提示暂不可用。查询需要联网，失败时程序会提示错误。其免费接口仅供非商业使用；商业使用请先检查其[服务条款](https://open-meteo.com/en/terms)。这项功能不读取设备位置，也不根据公网 IP 猜测城市。
+
+终端回答只显示地点、日期和气温，不附带数据来源文字；来源与使用条件记录在本节。
 
 如果 DeepSeek 偶尔把内部工具标记当作文本返回，程序只解析完整且参数合法的 `get_weather` 调用；不能解析时会报错，不会把标记显示为答案。旧会话文件中已保存的错误标记仍留在本机记录里，但后续请求会跳过该轮上下文。
 
