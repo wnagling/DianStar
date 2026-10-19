@@ -14,8 +14,7 @@ from openai import APIConnectionError
 
 from agent_try.__main__ import main
 from agent_try.conversations import Conversation
-from agent_try.deepseek import LOCATION_TOOL, ask_deepseek
-from agent_try.location import DeviceLocation
+from agent_try.deepseek import ask_deepseek
 
 
 class DeepSeekTests(unittest.IsolatedAsyncioTestCase):
@@ -57,60 +56,7 @@ class DeepSeekTests(unittest.IsolatedAsyncioTestCase):
             model="deepseek-flash",
             messages=[{"role": "user", "content": "Hello"}],
             stream=False,
-            tools=[LOCATION_TOOL],
-            tool_choice="auto",
-            extra_body={"thinking": {"type": "disabled"}},
         )
-
-    @patch("agent_try.deepseek.get_location", new_callable=AsyncMock)
-    @patch("agent_try.deepseek.AsyncOpenAI")
-    async def test_approved_location_call_returns_result_to_model(self, client_class, location):
-        location.return_value = DeviceLocation(12.345678, 98.765432, 8.25)
-        call = SimpleNamespace(id="call_1", function=SimpleNamespace(name="get_location", arguments="{}"))
-        client = client_class.return_value
-        client.chat.completions.create = AsyncMock(side_effect=[
-            SimpleNamespace(choices=[SimpleNamespace(
-                finish_reason="tool_calls", message=SimpleNamespace(content=None, tool_calls=[call])
-            )]),
-            SimpleNamespace(choices=[SimpleNamespace(
-                finish_reason="stop", message=SimpleNamespace(content="Location found")
-            )]),
-        ])
-        with tempfile.TemporaryDirectory() as temporary:
-            env_file = Path(temporary) / ".env"
-            env_file.write_text("DEEPSEEK_API_KEY=test-key\n", encoding="utf-8")
-            history = []
-            answer = await ask_deepseek("Where am I?", env_file=env_file,
-                                        history=history, approve_location=lambda: True)
-        self.assertEqual(answer, "Location found")
-        location.assert_awaited_once_with()
-        second = client.chat.completions.create.await_args_list[1].kwargs
-        self.assertEqual(second["tool_choice"], "none")
-        self.assertEqual(second["messages"][-1]["role"], "tool")
-        self.assertEqual(second["messages"][-1]["content"],
-                         '{"latitude": 12.3457, "longitude": 98.7654, "accuracy_meters": 8.2}')
-        self.assertEqual(len(history), 2)
-
-    @patch("agent_try.deepseek.get_location", new_callable=AsyncMock)
-    @patch("agent_try.deepseek.AsyncOpenAI")
-    async def test_denied_location_never_reads_device(self, client_class, location):
-        call = SimpleNamespace(id="call_1", function=SimpleNamespace(name="get_location", arguments="{}"))
-        client = client_class.return_value
-        client.chat.completions.create = AsyncMock(side_effect=[
-            SimpleNamespace(choices=[SimpleNamespace(
-                finish_reason="tool_calls", message=SimpleNamespace(content=None, tool_calls=[call])
-            )]),
-            SimpleNamespace(choices=[SimpleNamespace(
-                finish_reason="stop", message=SimpleNamespace(content="I cannot access it")
-            )]),
-        ])
-        with tempfile.TemporaryDirectory() as temporary:
-            env_file = Path(temporary) / ".env"
-            env_file.write_text("DEEPSEEK_API_KEY=test-key\n", encoding="utf-8")
-            await ask_deepseek("Where am I?", env_file=env_file,
-                               approve_location=lambda: False)
-        location.assert_not_awaited()
-        self.assertIn("did not approve", client.chat.completions.create.await_args_list[1].kwargs["messages"][-1]["content"])
 
     @patch("agent_try.deepseek.AsyncOpenAI")
     async def test_follow_up_sends_prior_successful_exchange(self, client_class):
