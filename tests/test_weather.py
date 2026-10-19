@@ -1,0 +1,57 @@
+"""Checks for city lookup, local dates, and forecast extraction."""
+
+import datetime as dt
+import unittest
+from unittest.mock import AsyncMock, patch
+from zoneinfo import ZoneInfo
+
+from agent_try.tools.weather import FORECAST_URL, GEOCODING_URL, WeatherUnavailable, get_weather
+
+
+PLACE = {
+    "name": "北京", "admin1": "北京", "country": "中国",
+    "latitude": 39.9, "longitude": 116.4, "timezone": "Asia/Shanghai",
+    "population": 18_000_000,
+}
+
+
+class WeatherTests(unittest.IsolatedAsyncioTestCase):
+    @patch("agent_try.tools.weather._get_json", new_callable=AsyncMock)
+    async def test_today_uses_place_timezone_and_extracts_daily_high_low(self, get_json):
+        today = dt.datetime.now(ZoneInfo("Asia/Shanghai")).date().isoformat()
+        get_json.side_effect = [
+            {"results": [PLACE]},
+            {"daily": {"time": [today], "temperature_2m_max": [21.4], "temperature_2m_min": [9.2]}},
+        ]
+        result = await get_weather("北京", "today")
+        self.assertEqual(result["date"], today)
+        self.assertEqual(result["temperature_max_c"], 21.4)
+        self.assertEqual(result["temperature_min_c"], 9.2)
+        self.assertEqual(get_json.await_args_list[0].args[0], GEOCODING_URL)
+        self.assertEqual(get_json.await_args_list[1].args[0], FORECAST_URL)
+        self.assertEqual(get_json.await_args_list[1].args[1]["timezone"], "Asia/Shanghai")
+
+    @patch("agent_try.tools.weather._get_json", new_callable=AsyncMock)
+    async def test_date_outside_window_stops_before_forecast(self, get_json):
+        get_json.return_value = {"results": [PLACE]}
+        future = (dt.datetime.now(ZoneInfo("Asia/Shanghai")).date() + dt.timedelta(days=8)).isoformat()
+        with self.assertRaisesRegex(WeatherUnavailable, "next 7"):
+            await get_weather("北京", future)
+        get_json.assert_awaited_once()
+
+    @patch("agent_try.tools.weather._get_json", new_callable=AsyncMock)
+    async def test_ambiguous_city_requests_qualification(self, get_json):
+        get_json.return_value = {"results": [PLACE, {**PLACE, "country": "Other", "population": 17_000_000}]}
+        with self.assertRaisesRegex(WeatherUnavailable, "ambiguous"):
+            await get_weather("北京", "today")
+        get_json.assert_awaited_once()
+
+    @patch("agent_try.tools.weather._get_json", new_callable=AsyncMock)
+    async def test_major_city_wins_over_small_same_named_places(self, get_json):
+        today = dt.datetime.now(ZoneInfo("Asia/Shanghai")).date().isoformat()
+        get_json.side_effect = [
+            {"results": [PLACE, {**PLACE, "admin1": "Other", "population": None}]},
+            {"daily": {"time": [today], "temperature_2m_max": [21], "temperature_2m_min": [9]}},
+        ]
+        result = await get_weather("北京", "today")
+        self.assertIn("中国", result["location"])

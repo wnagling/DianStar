@@ -1,16 +1,35 @@
 """Send a question and optional conversation history to DeepSeek."""
 
 import asyncio
+import json
 from pathlib import Path
 
 from dotenv import dotenv_values
 from openai import AsyncOpenAI
+
+from .tools.weather import WeatherUnavailable, get_weather
 
 
 PROJECT_ROOT = Path(__file__).resolve().parent.parent
 ENV_FILE = PROJECT_ROOT / ".env"
 MODEL = "deepseek-flash"
 BASE_URL = "https://api.deepseek.com"
+WEATHER_TOOL = {
+    "type": "function",
+    "function": {
+        "name": "get_weather",
+        "description": "Get a city's forecast high and low temperature in Celsius for one local date. Ask for a city and date if missing. The date must be today, tomorrow, or YYYY-MM-DD within the next 7 days. Do not guess a missing city.",
+        "parameters": {
+            "type": "object",
+            "properties": {
+                "location": {"type": "string", "description": "City, optionally followed by a region or country"},
+                "date": {"type": "string", "description": "today, tomorrow, or YYYY-MM-DD"},
+            },
+            "required": ["location", "date"],
+            "additionalProperties": False,
+        },
+    },
+}
 
 
 async def ask_deepseek(
@@ -19,7 +38,7 @@ async def ask_deepseek(
     history: list[dict[str, str]] | None = None,
     env_file: Path = ENV_FILE,
 ) -> str:
-    """Make one request and add a successful exchange to in-memory history."""
+    """Ask DeepSeek and optionally answer one forecast tool call."""
     if not question.strip():
         raise ValueError("Please provide a question.")
     if not env_file.is_file():
@@ -36,19 +55,58 @@ async def ask_deepseek(
         timeout=60.0,
         max_retries=0,
     )
-    async with client:
-        response = await asyncio.wait_for(
+
+    async def request(tool_choice: str):
+        return await asyncio.wait_for(
             client.chat.completions.create(
                 model=MODEL,
                 messages=messages,
                 stream=False,
+                tools=[WEATHER_TOOL],
+                tool_choice=tool_choice,
+                extra_body={"thinking": {"type": "disabled"}},
             ),
             timeout=60.0,
         )
-    if not response.choices:
-        raise ValueError("DeepSeek returned no answer.")
 
-    choice = response.choices[0]
+    async with client:
+        response = await request("auto")
+        if not response.choices:
+            raise ValueError("DeepSeek returned no answer.")
+        choice = response.choices[0]
+        if choice.finish_reason == "tool_calls":
+            calls = choice.message.tool_calls or []
+            if not calls:
+                raise ValueError("DeepSeek returned no tool call.")
+            messages.append(choice.message)
+            weather_used = False
+            for call in calls:
+                try:
+                    arguments = json.loads(call.function.arguments)
+                except (ValueError, TypeError):
+                    arguments = None
+                if (
+                    call.function.name != "get_weather"
+                    or not isinstance(arguments, dict)
+                    or set(arguments) != {"location", "date"}
+                ):
+                    result = {"error": "Unknown tool or invalid arguments."}
+                elif weather_used:
+                    result = {"error": "Only one weather lookup is supported per question."}
+                else:
+                    weather_used = True
+                    try:
+                        result = await get_weather(arguments["location"], arguments["date"])
+                    except WeatherUnavailable as error:
+                        result = {"error": str(error)}
+                messages.append({
+                    "role": "tool", "tool_call_id": call.id,
+                    "content": json.dumps(result, ensure_ascii=False),
+                })
+            response = await request("none")
+            if not response.choices:
+                raise ValueError("DeepSeek returned no answer.")
+            choice = response.choices[0]
     if choice.finish_reason != "stop" or not choice.message.content:
         raise ValueError("DeepSeek did not return a complete text answer.")
     answer = choice.message.content

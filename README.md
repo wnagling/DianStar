@@ -4,9 +4,9 @@ agentTry 是一个学习和构建本地 Agent 的项目。长期方向见 [产�
 
 ## 当前状态
 
-- 已有：Python 命令行入口、从本地 `.env` 读取密钥、单次问答、可保存并恢复的终端连续对话。
-- 未有：`list_files` / `read_file` 工具和工具调用循环。当前模型无法读取项目文件，回答不能作为项目事实的依据。
-- 验收：2026-10-18 已完成一次真实 DeepSeek 单次问答，结果见 [开发日志](./开发日志/2026-10-18.md)。
+- 已有：Python 命令行入口、从本地 `.env` 读取密钥、单次问答、可保存并恢复的终端连续对话，以及查询城市未来 7 天最高、最低气温的工具。
+- 未有：`list_files` / `read_file` 文件工具。当前模型无法读取项目文件，回答不能作为项目事实的依据。
+- 验收：2026-10-18 已完成真实 DeepSeek 单次问答；2026-10-19 已完成真实天气工具调用，结果见 [开发日志](./开发日志/2026-10-19.md)。
 - 暂不实现：文件修改、命令执行、记忆、多 Agent 调度和外部 Agent 接入。
 
 此前的 Rust 只读原型保存在本地 Git 提交 `7729740`。它曾通过离线单元测试，但没有完成真实 DeepSeek API 验收。[2026-10-13 开发日志](./开发日志/2026-10-13.md)记录的是该历史阶段；当前语言决定见 [编程语言选型](./编程语言选型.md)。
@@ -32,7 +32,13 @@ python -m agent_try "请用一句话介绍你自己。"
 
 如果当前 PowerShell 的中文输出显示为乱码，可在运行前设置 `$env:PYTHONIOENCODING='utf-8'`。
 
-`.env` 的格式可参考 [.env.example](./.env.example)：只需将等号右侧替换为你的密钥。程序默认请求 `deepseek-flash`。每轮请求设置 60 秒总时限，SDK 自动重试已关闭；出错时不打印密钥。单次问答以失败状态退出；连续对话会提示错误并允许继续输入。
+`.env` 的格式可参考 [.env.example](./.env.example)：只需将等号右侧替换为你的密钥。程序默认请求 `deepseek-flash`。每次 DeepSeek API 请求设置 60 秒时限，SDK 自动重试已关闭；使用天气工具时一轮问答会有两次 DeepSeek 请求。出错时不打印密钥。单次问答以失败状态退出；连续对话会提示错误并允许继续输入。
+
+## 天气工具
+
+例如运行 `python -m agent_try "北京明天的最高和最低气温是多少？"`。模型会提取地点和日期，调用 `agent_try/tools/weather.py` 中的 `get_weather(location, date)`，再根据工具结果回答。首版支持目的地当地的今天及之后 7 天；返回摄氏度的日最高、最低气温和解析到的城市。`date` 可用 `today`、`tomorrow` 或 `YYYY-MM-DD`。重名地点如果无法可靠区分，会要求补充地区或国家。没有地点或日期时应先补充信息。
+
+天气数据来自 [Open-Meteo](https://open-meteo.com/)，城市名称通过其 [Geocoding API](https://open-meteo.com/en/docs/geocoding-api) 解析；返回的是[预报](https://open-meteo.com/en/docs)，并非实测值。查询需要联网，失败时会向模型返回错误。其免费接口仅供非商业使用；商业使用请先检查其[服务条款](https://open-meteo.com/en/terms)。这项功能不读取设备位置，也不根据公网 IP 猜测城市。
 
 离线检查：`python -m unittest discover -s tests`。它使用模拟回复；真实 API 的单次问答已另行验证，见上面的开发日志。
 
@@ -40,7 +46,9 @@ python -m agent_try "请用一句话介绍你自己。"
 
 ```text
 agent_try/__main__.py   命令行入口和错误提示
-agent_try/deepseek.py   单次 DeepSeek SDK 请求
+agent_try/deepseek.py   DeepSeek SDK 请求及工具调用
+agent_try/tools/weather.py  城市天气查询函数
+agent_try/tools/__init__.py 工具包入口
 agent_try/__init__.py   Python 包
 .vscode/launch.json     VS Code 模块运行配置
 pyproject.toml          项目元数据和依赖
@@ -48,6 +56,7 @@ pyproject.toml          项目元数据和依赖
 .env.example            不含真实密钥的格式示例
 .local/conversations/   本机会话记录，不进入 Git
 tests/test_deepseek.py  离线检查
+tests/test_weather.py   天气工具离线检查
 产品文档.md              长期方向
 编程语言选型.md          当前 Python 决定与历史 Rust 记录
 开发日志/2026-10-13.md  历史开发日志
@@ -55,4 +64,4 @@ tests/test_deepseek.py  离线检查
 
 ## 下一小步
 
-下一步实现受项目根目录约束的只读文件工具，并验证路径和文件大小限制，再让模型调用工具。真实工具循环跑通后，再检查结论和文件行号；在此之前不宣称项目分析 Agent 已可用。
+下一步实现受项目根目录约束的只读文件工具，并验证路径和文件大小限制，再让模型调用。文件工具完成后，再检查结论和文件行号；在此之前不宣称项目分析 Agent 已可用。

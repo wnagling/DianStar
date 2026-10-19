@@ -14,7 +14,7 @@ from openai import APIConnectionError
 
 from agent_try.__main__ import main
 from agent_try.conversations import Conversation
-from agent_try.deepseek import ask_deepseek
+from agent_try.deepseek import WEATHER_TOOL, ask_deepseek
 
 
 class DeepSeekTests(unittest.IsolatedAsyncioTestCase):
@@ -56,7 +56,38 @@ class DeepSeekTests(unittest.IsolatedAsyncioTestCase):
             model="deepseek-flash",
             messages=[{"role": "user", "content": "Hello"}],
             stream=False,
+            tools=[WEATHER_TOOL],
+            tool_choice="auto",
+            extra_body={"thinking": {"type": "disabled"}},
         )
+
+    @patch("agent_try.deepseek.get_weather", new_callable=AsyncMock)
+    @patch("agent_try.deepseek.AsyncOpenAI")
+    async def test_weather_tool_result_is_returned_to_deepseek(self, client_class, weather):
+        weather.return_value = {"location": "北京", "date": "2026-10-20", "temperature_max_c": 18.0,
+                                "temperature_min_c": 8.0, "source": "Open-Meteo forecast"}
+        call = SimpleNamespace(id="call_1", function=SimpleNamespace(
+            name="get_weather", arguments='{"location":"北京","date":"2026-10-20"}'
+        ))
+        client = client_class.return_value
+        client.chat.completions.create = AsyncMock(side_effect=[
+            SimpleNamespace(choices=[SimpleNamespace(
+                finish_reason="tool_calls", message=SimpleNamespace(content=None, tool_calls=[call])
+            )]),
+            SimpleNamespace(choices=[SimpleNamespace(
+                finish_reason="stop", message=SimpleNamespace(content="北京 18 到 8 摄氏度")
+            )]),
+        ])
+        with tempfile.TemporaryDirectory() as temporary:
+            env_file = Path(temporary) / ".env"
+            env_file.write_text("DEEPSEEK_API_KEY=test-key\n", encoding="utf-8")
+            answer = await ask_deepseek("北京明天气温？", env_file=env_file)
+        self.assertIn("18", answer)
+        weather.assert_awaited_once_with("北京", "2026-10-20")
+        second = client.chat.completions.create.await_args_list[1].kwargs
+        self.assertEqual(second["tool_choice"], "none")
+        self.assertEqual(second["messages"][-1]["role"], "tool")
+        self.assertIn("temperature_max_c", second["messages"][-1]["content"])
 
     @patch("agent_try.deepseek.AsyncOpenAI")
     async def test_follow_up_sends_prior_successful_exchange(self, client_class):
