@@ -9,6 +9,13 @@ import httpx
 
 GEOCODING_URL = "https://geocoding-api.open-meteo.com/v1/search"
 FORECAST_URL = "https://api.open-meteo.com/v1/forecast"
+ADMIN_ALIASES = {
+    "新疆维吾尔自治区": "新疆",
+    "内蒙古自治区": "内蒙古",
+    "广西壮族自治区": "广西",
+    "宁夏回族自治区": "宁夏",
+    "西藏自治区": "西藏",
+}
 
 
 class WeatherUnavailable(Exception):
@@ -28,6 +35,31 @@ async def _get_json(url: str, params: dict[str, object]) -> dict:
     return data
 
 
+def _geocoding_candidates(location: str) -> list[str]:
+    """Try common Chinese city and province forms without dropping the region."""
+    query = location.strip().replace("，", ",")
+    city, comma, rest = query.partition(",")
+    city = city.strip()
+    suffix = f",{rest}" if comma else ""
+    first_qualifier, next_comma, remaining = rest.partition(",")
+    qualifier = first_qualifier.strip()
+    shorter = ADMIN_ALIASES.get(qualifier, qualifier)
+    if shorter == qualifier and qualifier.endswith(("省", "市")):
+        shorter = qualifier[:-1]
+    normalized_suffix = f", {shorter}" if comma else ""
+    if next_comma:
+        normalized_suffix += f", {remaining.strip()}"
+    city_variant = None
+    if re.fullmatch(r"[\u4e00-\u9fff]{2,8}", city):
+        city_variant = city[:-1] if city.endswith("市") else city + "市"
+    candidates = [query]
+    if city_variant:
+        candidates.append(city_variant + normalized_suffix)
+        candidates.append(city_variant + suffix)
+    candidates.append(city + normalized_suffix)
+    return list(dict.fromkeys(candidates))
+
+
 async def get_weather(location: str, date: str) -> dict[str, object]:
     """Return the local day's forecast high and low in Celsius for a named city."""
     if not isinstance(location, str) or not 2 <= len(location.strip()) <= 100:
@@ -40,17 +72,20 @@ async def get_weather(location: str, date: str) -> dict[str, object]:
         except ValueError as error:
             raise WeatherUnavailable("Provide a valid date in YYYY-MM-DD format.") from error
 
-    query = location.strip()
-    places = await _get_json(GEOCODING_URL, {
-        "name": query, "count": 5, "language": "zh", "format": "json"
-    })
-    if not places.get("results"):
-        city, separator, qualifier = query.partition(",")
-        if re.fullmatch(r"[\u4e00-\u9fff]{2,8}", city) and not city.endswith("市"):
-            retry_query = f"{city}市{separator}{qualifier}" if separator else f"{city}市"
-            places = await _get_json(GEOCODING_URL, {
-                "name": retry_query, "count": 5, "language": "zh", "format": "json"
-            })
+    places = {}
+    candidates = _geocoding_candidates(location)
+    city_name = location.strip().replace("，", ",").partition(",")[0].strip().removesuffix("市")
+    for query in candidates:
+        places = await _get_json(GEOCODING_URL, {
+            "name": query, "count": 5, "language": "zh", "format": "json"
+        })
+        if query != candidates[0] and places.get("results"):
+            # Prefix search can match nearby names; a fallback must match the city itself.
+            exact = [item for item in places["results"] if isinstance(item, dict)
+                     and str(item.get("name", "")).removesuffix("市") == city_name]
+            places = {"results": exact}
+        if places.get("results"):
+            break
     results = places.get("results") or []
     if not isinstance(results, list) or not results:
         raise WeatherUnavailable("City not found; use a city with a region or country.")

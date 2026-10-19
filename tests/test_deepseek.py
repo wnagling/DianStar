@@ -14,7 +14,7 @@ from openai import APIConnectionError
 
 from agent_try.__main__ import main
 from agent_try.conversations import Conversation
-from agent_try.deepseek import WEATHER_TOOL, ask_deepseek
+from agent_try.deepseek import WEATHER_REPLY_INSTRUCTIONS, WEATHER_TOOL, ask_deepseek
 
 
 class DeepSeekTests(unittest.IsolatedAsyncioTestCase):
@@ -54,7 +54,8 @@ class DeepSeekTests(unittest.IsolatedAsyncioTestCase):
         )
         client.chat.completions.create.assert_awaited_once_with(
             model="deepseek-flash",
-            messages=[{"role": "user", "content": "Hello"}],
+            messages=[{"role": "system", "content": WEATHER_REPLY_INSTRUCTIONS},
+                      {"role": "user", "content": "Hello"}],
             stream=False,
             tools=[WEATHER_TOOL],
             tool_choice="auto",
@@ -74,14 +75,68 @@ class DeepSeekTests(unittest.IsolatedAsyncioTestCase):
             SimpleNamespace(choices=[SimpleNamespace(
                 finish_reason="tool_calls", message=SimpleNamespace(content=None, tool_calls=[call])
             )]),
+            SimpleNamespace(choices=[SimpleNamespace(
+                finish_reason="stop", message=SimpleNamespace(content="北京明天最高 18°C，最低 8°C。")
+            )]),
         ])
         with tempfile.TemporaryDirectory() as temporary:
             env_file = Path(temporary) / ".env"
             env_file.write_text("DEEPSEEK_API_KEY=test-key\n", encoding="utf-8")
             answer = await ask_deepseek("北京明天气温？", env_file=env_file)
-        self.assertIn("18", answer)
+        self.assertEqual(answer, "北京明天最高 18°C，最低 8°C。")
         self.assertNotIn("当前气温", answer)
         weather.assert_awaited_once_with("北京", "2026-10-20")
+        self.assertEqual(client.chat.completions.create.await_count, 2)
+        sent = client.chat.completions.create.await_args_list[1].kwargs["messages"]
+        self.assertEqual(sent[1], {"role": "user", "content": "北京明天气温？"})
+        self.assertEqual(sent[2]["tool_calls"][0]["id"], "call_1")
+        self.assertEqual(sent[3]["role"], "tool")
+        self.assertEqual(sent[3]["tool_call_id"], "call_1")
+        self.assertIn('"temperature_max_c": 18.0', sent[3]["content"])
+        self.assertNotIn("source", sent[3]["content"])
+
+    @patch("agent_try.deepseek.get_weather", new_callable=AsyncMock)
+    @patch("agent_try.deepseek.AsyncOpenAI")
+    async def test_weather_answer_requires_evidence_and_retries_bad_temperature(self, client_class, weather):
+        weather.return_value = {"location": "潮州", "date": "2026-10-20",
+                                "temperature_current_c": 25.2,
+                                "temperature_max_c": 33.3, "temperature_min_c": 22.9}
+        call = SimpleNamespace(id="call_1", function=SimpleNamespace(
+            name="get_weather", arguments='{"location":"潮州","date":"today"}'
+        ))
+        replies = [
+            SimpleNamespace(finish_reason="stop", message=SimpleNamespace(content="潮州现在 30°C。")),
+            SimpleNamespace(finish_reason="tool_calls", message=SimpleNamespace(content=None, tool_calls=[call])),
+            SimpleNamespace(finish_reason="stop", message=SimpleNamespace(
+                content="潮州今天当前 25.2°C，最高 34°C，最低 22.9°C。")),
+            SimpleNamespace(finish_reason="stop", message=SimpleNamespace(
+                content="潮州今天当前 25.2°C，最高 33.3°C，最低 22.9°C。")),
+        ]
+        client = client_class.return_value
+        client.chat.completions.create = AsyncMock(side_effect=[
+            SimpleNamespace(choices=[reply]) for reply in replies
+        ])
+        with tempfile.TemporaryDirectory() as temporary:
+            env_file = Path(temporary) / ".env"
+            env_file.write_text("DEEPSEEK_API_KEY=test-key\n", encoding="utf-8")
+            history = []
+            answer = await ask_deepseek("潮州天气多少度？", history=history, env_file=env_file)
+        self.assertEqual(answer, "潮州今天当前 25.2°C，最高 33.3°C，最低 22.9°C。 你想查询哪天的天气？")
+        weather.assert_awaited_once_with("潮州", "today")
+        self.assertEqual(history[-1]["content"], answer)
+        self.assertEqual(client.chat.completions.create.await_count, 4)
+
+    @patch("agent_try.deepseek.AsyncOpenAI")
+    async def test_weather_without_city_can_request_location(self, client_class):
+        client = client_class.return_value
+        client.chat.completions.create = AsyncMock(return_value=SimpleNamespace(choices=[
+            SimpleNamespace(finish_reason="stop", message=SimpleNamespace(content="你想查询哪个城市的天气？"))
+        ]))
+        with tempfile.TemporaryDirectory() as temporary:
+            env_file = Path(temporary) / ".env"
+            env_file.write_text("DEEPSEEK_API_KEY=test-key\n", encoding="utf-8")
+            answer = await ask_deepseek("天气怎么样？", env_file=env_file)
+        self.assertEqual(answer, "你想查询哪个城市的天气？")
         client.chat.completions.create.assert_awaited_once()
         self.assertNotIn("数据来源", answer)
 
@@ -117,23 +172,73 @@ class DeepSeekTests(unittest.IsolatedAsyncioTestCase):
             '</｜｜DSML｜｜ invoke></｜｜DSML｜｜ calls>'
         )
         client = client_class.return_value
-        client.chat.completions.create = AsyncMock(return_value=SimpleNamespace(choices=[
-            SimpleNamespace(finish_reason="stop", message=SimpleNamespace(content=raw, tool_calls=None))
-        ]))
+        client.chat.completions.create = AsyncMock(side_effect=[
+            SimpleNamespace(choices=[SimpleNamespace(
+                finish_reason="stop", message=SimpleNamespace(content=raw, tool_calls=None)
+            )]),
+            SimpleNamespace(choices=[SimpleNamespace(
+                finish_reason="stop", message=SimpleNamespace(
+                    content="潮州今天当前约 25.2°C，最高 27°C，最低 20°C。"
+                )
+            )]),
+        ])
         with tempfile.TemporaryDirectory() as temporary:
             env_file = Path(temporary) / ".env"
             env_file.write_text("DEEPSEEK_API_KEY=test-key\n", encoding="utf-8")
             history = []
             answer = await ask_deepseek("潮州今天天气多少度？", history=history, env_file=env_file)
-        self.assertIn("27.0°C", answer)
-        self.assertIn("当前气温约 25.2°C", answer)
+        self.assertEqual(answer, "潮州今天当前约 25.2°C，最高 27°C，最低 20°C。")
         self.assertNotIn("当地时间", answer)
         self.assertNotIn("模型估计", answer)
         self.assertNotIn("数据来源", answer)
         self.assertNotIn("DSML", answer)
         self.assertNotIn("DSML", repr(history))
         weather.assert_awaited_once_with("潮州, 广东, 中国", "today")
-        client.chat.completions.create.assert_awaited_once()
+        self.assertEqual(client.chat.completions.create.await_count, 2)
+        sent = client.chat.completions.create.await_args_list[1].kwargs["messages"]
+        self.assertEqual(sent[-2], {"role": "user", "content": "潮州今天天气多少度？"})
+        self.assertIn('"temperature_current_c": 25.2', sent[-1]["content"])
+        self.assertNotIn("current_time", sent[-1]["content"])
+
+    @patch("agent_try.deepseek.get_weather", new_callable=AsyncMock)
+    @patch("agent_try.deepseek.AsyncOpenAI")
+    async def test_repeated_raw_tool_markup_uses_clean_result_context(self, client_class, weather):
+        weather.return_value = {"location": "潮州", "date": "2026-10-19",
+                                "temperature_current_c": 25.2,
+                                "temperature_max_c": 27.0, "temperature_min_c": 20.0}
+        call = SimpleNamespace(id="call_1", function=SimpleNamespace(
+            name="get_weather", arguments='{"location":"潮州","date":"today"}'
+        ))
+        raw = (
+            '<｜｜DSML｜｜ calls><｜｜DSML｜｜ invoke name="get_weather">'
+            '<｜｜DSML｜｜ parameter name="location" string="true">潮州</｜｜DSML｜｜ parameter>'
+            '<｜｜DSML｜｜ parameter name="date" string="true">today</｜｜DSML｜｜ parameter>'
+            '</｜｜DSML｜｜ invoke></｜｜DSML｜｜ calls>'
+        )
+        client = client_class.return_value
+        client.chat.completions.create = AsyncMock(side_effect=[
+            SimpleNamespace(choices=[SimpleNamespace(
+                finish_reason="tool_calls", message=SimpleNamespace(content=None, tool_calls=[call])
+            )]),
+            SimpleNamespace(choices=[SimpleNamespace(
+                finish_reason="stop", message=SimpleNamespace(content=raw, tool_calls=None)
+            )]),
+            SimpleNamespace(choices=[SimpleNamespace(
+                finish_reason="stop", message=SimpleNamespace(content="潮州现在 25.2°C，最高 27°C，最低 20°C。")
+            )]),
+        ])
+        with tempfile.TemporaryDirectory() as temporary:
+            env_file = Path(temporary) / ".env"
+            env_file.write_text("DEEPSEEK_API_KEY=test-key\n", encoding="utf-8")
+            history = []
+            answer = await ask_deepseek("潮州现在几度？", history=history, env_file=env_file)
+        self.assertEqual(answer, "潮州现在 25.2°C，最高 27°C，最低 20°C。")
+        self.assertEqual(weather.await_count, 1)
+        sent = client.chat.completions.create.await_args_list[2].kwargs["messages"]
+        self.assertEqual(sent[1], {"role": "user", "content": "潮州现在几度？"})
+        self.assertIn('"temperature_current_c": 25.2', sent[2]["content"])
+        self.assertNotIn("DSML", repr(sent))
+        self.assertEqual(history[-1]["content"], answer)
 
     @patch("agent_try.deepseek.AsyncOpenAI")
     async def test_raw_dsml_failure_is_not_shown_or_saved(self, client_class):
@@ -166,6 +271,7 @@ class DeepSeekTests(unittest.IsolatedAsyncioTestCase):
             env_file.write_text("DEEPSEEK_API_KEY=test-key\n", encoding="utf-8")
             await ask_deepseek("你好", history=old_history, env_file=env_file)
         self.assertEqual(client.chat.completions.create.await_args.kwargs["messages"], [
+            {"role": "system", "content": WEATHER_REPLY_INSTRUCTIONS},
             {"role": "user", "content": "你好"},
         ])
 
@@ -189,6 +295,7 @@ class DeepSeekTests(unittest.IsolatedAsyncioTestCase):
             await ask_deepseek("Follow up", history=history, env_file=env_file)
 
         self.assertEqual(client.chat.completions.create.await_args_list[1].kwargs["messages"], [
+            {"role": "system", "content": WEATHER_REPLY_INSTRUCTIONS},
             {"role": "user", "content": "First question"},
             {"role": "assistant", "content": "First answer"},
             {"role": "user", "content": "Follow up"},
@@ -215,6 +322,7 @@ class DeepSeekTests(unittest.IsolatedAsyncioTestCase):
             await ask_deepseek("Retry", history=history, env_file=env_file)
 
         self.assertEqual(client.chat.completions.create.await_args_list[1].kwargs["messages"], [
+            {"role": "system", "content": WEATHER_REPLY_INSTRUCTIONS},
             {"role": "user", "content": "Retry"},
         ])
 
