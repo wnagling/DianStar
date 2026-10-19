@@ -74,9 +74,6 @@ class DeepSeekTests(unittest.IsolatedAsyncioTestCase):
             SimpleNamespace(choices=[SimpleNamespace(
                 finish_reason="tool_calls", message=SimpleNamespace(content=None, tool_calls=[call])
             )]),
-            SimpleNamespace(choices=[SimpleNamespace(
-                finish_reason="stop", message=SimpleNamespace(content="北京 18 到 8 摄氏度")
-            )]),
         ])
         with tempfile.TemporaryDirectory() as temporary:
             env_file = Path(temporary) / ".env"
@@ -84,10 +81,87 @@ class DeepSeekTests(unittest.IsolatedAsyncioTestCase):
             answer = await ask_deepseek("北京明天气温？", env_file=env_file)
         self.assertIn("18", answer)
         weather.assert_awaited_once_with("北京", "2026-10-20")
-        second = client.chat.completions.create.await_args_list[1].kwargs
-        self.assertEqual(second["tool_choice"], "none")
-        self.assertEqual(second["messages"][-1]["role"], "tool")
-        self.assertIn("temperature_max_c", second["messages"][-1]["content"])
+        client.chat.completions.create.assert_awaited_once()
+        self.assertIn("Open-Meteo", answer)
+
+    @patch("agent_try.deepseek.AsyncOpenAI")
+    async def test_incomplete_raw_dsml_is_rejected(self, client_class):
+        raw = '<｜｜DSML｜｜ calls><｜｜DSML｜｜ invoke name="get_weather">...</｜｜DSML｜｜ invoke>'
+        client = client_class.return_value
+        client.chat.completions.create = AsyncMock(return_value=
+            SimpleNamespace(choices=[SimpleNamespace(
+                finish_reason="stop", message=SimpleNamespace(content=raw, tool_calls=None)
+            )])
+        )
+        with tempfile.TemporaryDirectory() as temporary:
+            env_file = Path(temporary) / ".env"
+            env_file.write_text("DEEPSEEK_API_KEY=test-key\n", encoding="utf-8")
+            history = []
+            with self.assertRaisesRegex(ValueError, "invalid tool markup"):
+                await ask_deepseek("潮州今天天气多少度？", history=history, env_file=env_file)
+        self.assertEqual(history, [])
+
+    @patch("agent_try.deepseek.get_weather", new_callable=AsyncMock)
+    @patch("agent_try.deepseek.AsyncOpenAI")
+    async def test_complete_raw_dsml_executes_weather_without_leaking_markup(self, client_class, weather):
+        weather.return_value = {
+            "location": "潮州, 广东, 中国", "date": "2026-10-19",
+            "temperature_max_c": 27.0, "temperature_min_c": 20.0,
+        }
+        raw = (
+            '<｜｜DSML｜｜ calls><｜｜DSML｜｜ invoke name="get_weather">'
+            '<｜｜DSML｜｜ parameter name="location" string="true">潮州, 广东, 中国</｜｜DSML｜｜ parameter>'
+            '<｜｜DSML｜｜ parameter name="date" string="true">today</｜｜DSML｜｜ parameter>'
+            '</｜｜DSML｜｜ invoke></｜｜DSML｜｜ calls>'
+        )
+        client = client_class.return_value
+        client.chat.completions.create = AsyncMock(return_value=SimpleNamespace(choices=[
+            SimpleNamespace(finish_reason="stop", message=SimpleNamespace(content=raw, tool_calls=None))
+        ]))
+        with tempfile.TemporaryDirectory() as temporary:
+            env_file = Path(temporary) / ".env"
+            env_file.write_text("DEEPSEEK_API_KEY=test-key\n", encoding="utf-8")
+            history = []
+            answer = await ask_deepseek("潮州今天天气多少度？", history=history, env_file=env_file)
+        self.assertIn("27.0°C", answer)
+        self.assertNotIn("DSML", answer)
+        self.assertNotIn("DSML", repr(history))
+        weather.assert_awaited_once_with("潮州, 广东, 中国", "today")
+        client.chat.completions.create.assert_awaited_once()
+
+    @patch("agent_try.deepseek.AsyncOpenAI")
+    async def test_raw_dsml_failure_is_not_shown_or_saved(self, client_class):
+        raw = '<｜｜DSML｜｜ invoke name="get_weather">...</｜｜DSML｜｜ invoke>'
+        client = client_class.return_value
+        client.chat.completions.create = AsyncMock(return_value=SimpleNamespace(choices=[
+            SimpleNamespace(finish_reason="stop", message=SimpleNamespace(content=raw, tool_calls=None))
+        ]))
+        with tempfile.TemporaryDirectory() as temporary:
+            env_file = Path(temporary) / ".env"
+            env_file.write_text("DEEPSEEK_API_KEY=test-key\n", encoding="utf-8")
+            history = []
+            with self.assertRaisesRegex(ValueError, "invalid tool markup"):
+                await ask_deepseek("潮州今天天气多少度？", history=history, env_file=env_file)
+        self.assertEqual(history, [])
+        client.chat.completions.create.assert_awaited_once()
+
+    @patch("agent_try.deepseek.AsyncOpenAI")
+    async def test_old_raw_dsml_turn_is_not_sent_as_context(self, client_class):
+        client = client_class.return_value
+        client.chat.completions.create = AsyncMock(return_value=SimpleNamespace(choices=[
+            SimpleNamespace(finish_reason="stop", message=SimpleNamespace(content="你好"))
+        ]))
+        old_history = [
+            {"role": "user", "content": "潮州今天天气多少度？"},
+            {"role": "assistant", "content": '<｜｜DSML｜｜ invoke name="get_weather">...' },
+        ]
+        with tempfile.TemporaryDirectory() as temporary:
+            env_file = Path(temporary) / ".env"
+            env_file.write_text("DEEPSEEK_API_KEY=test-key\n", encoding="utf-8")
+            await ask_deepseek("你好", history=old_history, env_file=env_file)
+        self.assertEqual(client.chat.completions.create.await_args.kwargs["messages"], [
+            {"role": "user", "content": "你好"},
+        ])
 
     @patch("agent_try.deepseek.AsyncOpenAI")
     async def test_follow_up_sends_prior_successful_exchange(self, client_class):

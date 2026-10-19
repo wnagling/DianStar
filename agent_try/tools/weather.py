@@ -1,6 +1,7 @@
 """Look up a city's daily forecast through Open-Meteo."""
 
 import datetime as dt
+import re
 from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
 import httpx
@@ -39,9 +40,17 @@ async def get_weather(location: str, date: str) -> dict[str, object]:
         except ValueError as error:
             raise WeatherUnavailable("Provide a valid date in YYYY-MM-DD format.") from error
 
+    query = location.strip()
     places = await _get_json(GEOCODING_URL, {
-        "name": location.strip(), "count": 5, "language": "zh", "format": "json"
+        "name": query, "count": 5, "language": "zh", "format": "json"
     })
+    if not places.get("results"):
+        city, separator, qualifier = query.partition(",")
+        if re.fullmatch(r"[\u4e00-\u9fff]{2,8}", city) and not city.endswith("市"):
+            retry_query = f"{city}市{separator}{qualifier}" if separator else f"{city}市"
+            places = await _get_json(GEOCODING_URL, {
+                "name": retry_query, "count": 5, "language": "zh", "format": "json"
+            })
     results = places.get("results") or []
     if not isinstance(results, list) or not results:
         raise WeatherUnavailable("City not found; use a city with a region or country.")

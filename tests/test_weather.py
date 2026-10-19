@@ -17,6 +17,18 @@ PLACE = {
 
 class WeatherTests(unittest.IsolatedAsyncioTestCase):
     @patch("agent_try.tools.weather._get_json", new_callable=AsyncMock)
+    async def test_chinese_city_suffix_fallback(self, get_json):
+        today = dt.datetime.now(ZoneInfo("Asia/Shanghai")).date().isoformat()
+        get_json.side_effect = [
+            {},
+            {"results": [{**PLACE, "name": "潮州市", "admin1": "广东"}]},
+            {"daily": {"time": [today], "temperature_2m_max": [27], "temperature_2m_min": [20]}},
+        ]
+        result = await get_weather("潮州, 广东, 中国", "today")
+        self.assertIn("潮州市", result["location"])
+        self.assertEqual(get_json.await_args_list[1].args[1]["name"], "潮州市, 广东, 中国")
+
+    @patch("agent_try.tools.weather._get_json", new_callable=AsyncMock)
     async def test_today_uses_place_timezone_and_extracts_daily_high_low(self, get_json):
         today = dt.datetime.now(ZoneInfo("Asia/Shanghai")).date().isoformat()
         get_json.side_effect = [

@@ -32,13 +32,15 @@ python -m agent_try "请用一句话介绍你自己。"
 
 如果当前 PowerShell 的中文输出显示为乱码，可在运行前设置 `$env:PYTHONIOENCODING='utf-8'`。
 
-`.env` 的格式可参考 [.env.example](./.env.example)：只需将等号右侧替换为你的密钥。程序默认请求 `deepseek-flash`。每次 DeepSeek API 请求设置 60 秒时限，SDK 自动重试已关闭；使用天气工具时一轮问答会有两次 DeepSeek 请求。出错时不打印密钥。单次问答以失败状态退出；连续对话会提示错误并允许继续输入。
+`.env` 的格式可参考 [.env.example](./.env.example)：只需将等号右侧替换为你的密钥。程序默认请求 `deepseek-flash`。每次 DeepSeek API 请求设置 60 秒时限，SDK 自动重试已关闭。天气工具得到结果后直接格式化回答，一轮只需一次 DeepSeek 请求。出错时不打印密钥。单次问答以失败状态退出；连续对话会提示错误并允许继续输入。
 
 ## 天气工具
 
-例如运行 `python -m agent_try "北京明天的最高和最低气温是多少？"`。模型会提取地点和日期，调用 `agent_try/tools/weather.py` 中的 `get_weather(location, date)`，再根据工具结果回答。首版支持目的地当地的今天及之后 7 天；返回摄氏度的日最高、最低气温和解析到的城市。`date` 可用 `today`、`tomorrow` 或 `YYYY-MM-DD`。重名地点如果无法可靠区分，会要求补充地区或国家。没有地点或日期时应先补充信息。
+例如运行 `python -m agent_try "北京明天的最高和最低气温是多少？"`。模型会提取地点和日期，调用 `agent_try/tools/weather.py` 中的 `get_weather(location, date)`；程序核对工具结果后直接格式化回答。首版支持目的地当地的今天及之后 7 天；返回摄氏度的日最高、最低气温和解析到的城市。`date` 可用 `today`、`tomorrow` 或 `YYYY-MM-DD`。重名地点如果无法可靠区分，会要求补充地区或国家。没有地点或日期时应先补充信息。
 
-天气数据来自 [Open-Meteo](https://open-meteo.com/)，城市名称通过其 [Geocoding API](https://open-meteo.com/en/docs/geocoding-api) 解析；返回的是[预报](https://open-meteo.com/en/docs)，并非实测值。查询需要联网，失败时会向模型返回错误。其免费接口仅供非商业使用；商业使用请先检查其[服务条款](https://open-meteo.com/en/terms)。这项功能不读取设备位置，也不根据公网 IP 猜测城市。
+天气数据来自 [Open-Meteo](https://open-meteo.com/)，城市名称通过其 [Geocoding API](https://open-meteo.com/en/docs/geocoding-api) 解析；返回的是[预报](https://open-meteo.com/en/docs)，并非实测值。查询需要联网，失败时程序会提示错误。其免费接口仅供非商业使用；商业使用请先检查其[服务条款](https://open-meteo.com/en/terms)。这项功能不读取设备位置，也不根据公网 IP 猜测城市。
+
+如果 DeepSeek 偶尔把内部工具标记当作文本返回，程序只解析完整且参数合法的 `get_weather` 调用；不能解析时会报错，不会把标记显示为答案。旧会话文件中已保存的错误标记仍留在本机记录里，但后续请求会跳过该轮上下文。
 
 离线检查：`python -m unittest discover -s tests`。它使用模拟回复；真实 API 的单次问答已另行验证，见上面的开发日志。
 
