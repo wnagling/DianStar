@@ -1,4 +1,4 @@
-"""Small, bounded Think → Act → Observe loop."""
+# 通用任务循环：在限定次数内推进思考、工具执行、结果观察与回答验收。
 
 from dataclasses import dataclass
 from typing import Awaitable, Callable

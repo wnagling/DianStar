@@ -1,4 +1,4 @@
-"""Local, resumable conversation records."""
+# 管理本地会话：生成 ID、保存聊天记录，并支持恢复及清空模型上下文。
 
 import json
 import os

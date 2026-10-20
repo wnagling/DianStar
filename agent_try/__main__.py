@@ -1,4 +1,4 @@
-"""Command-line entry point for DeepSeek questions and interactive chat."""
+# 命令行入口：处理参数、交互指令和会话切换，并展示 DeepSeek 的回答或错误。
 
 import argparse
 import asyncio

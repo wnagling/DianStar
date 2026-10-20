@@ -1,4 +1,4 @@
-"""DeepSeek SDK adapter: messages, responses, and provider-specific tool markup."""
+# DeepSeek SDK 适配层：创建客户端、组织消息并解析文字或工具调用响应。
 
 import asyncio
 import json

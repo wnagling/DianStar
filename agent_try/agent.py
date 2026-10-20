@@ -1,4 +1,4 @@
-"""Application orchestration: choose tools, verify results, and save completed turns."""
+# 编排一轮提问：调用模型与工具，验收回答，并更新成功的对话历史。
 
 from pathlib import Path
 

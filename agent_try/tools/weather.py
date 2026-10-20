@@ -1,4 +1,4 @@
-"""Look up a city's daily forecast through Open-Meteo."""
+# 天气工具：解析城市与日期，通过 Open-Meteo 查询当前及每日气温。
 
 import datetime as dt
 import re

@@ -1,4 +1,4 @@
-"""Offline checks for DeepSeek questions and interactive chat."""
+# 离线测试 DeepSeek 问答、工具调用、终端交互和会话行为。
 
 import io
 import sys

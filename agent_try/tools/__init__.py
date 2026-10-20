@@ -1,1 +1,1 @@
-"""Functions the agent can call to obtain external data."""
+# Agent 可调用的外部数据工具包；目前提供天气查询。

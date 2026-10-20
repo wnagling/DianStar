@@ -1,4 +1,4 @@
-"""Checks for the weather completion contract and loop stopping rules."""
+# 测试天气回答的完成条件，以及任务循环的停止规则。
 
 import unittest
 

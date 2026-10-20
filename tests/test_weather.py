@@ -1,4 +1,4 @@
-"""Checks for city lookup, local dates, and forecast extraction."""
+# 测试天气工具的城市查找、当地日期判断和预报气温提取。
 
 import datetime as dt
 import unittest

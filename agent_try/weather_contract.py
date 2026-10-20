@@ -1,4 +1,4 @@
-"""Completion rules for weather questions, separate from the agent loop."""
+# 天气任务的完成规则：识别天气问题、裁剪工具数据并核对回答内容。
 
 import json
 import re
