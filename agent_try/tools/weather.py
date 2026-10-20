@@ -38,6 +38,14 @@ class WeatherUnavailable(Exception):
     """The requested forecast cannot be returned reliably."""
 
 
+class WeatherLocationAmbiguous(WeatherUnavailable):
+    """The city name matches multiple plausible places."""
+
+
+class WeatherLocationNotFound(WeatherUnavailable):
+    """No place matched the supplied city name."""
+
+
 async def _get_json(url: str, params: dict[str, object]) -> dict:
     try:
         async with httpx.AsyncClient(timeout=10.0) as client:
@@ -79,7 +87,7 @@ def _geocoding_candidates(location: str) -> list[str]:
 async def get_weather(location: str, date: str) -> dict[str, object]:
     """Return the local day's forecast high and low in Celsius for a named city."""
     if not isinstance(location, str) or not 2 <= len(location.strip()) <= 100:
-        raise WeatherUnavailable("Provide a city name, optionally with a region or country.")
+        raise WeatherLocationNotFound("Provide a city name, optionally with a region or country.")
     if not isinstance(date, str) or (date not in {"today", "tomorrow"} and len(date) != 10):
         raise WeatherUnavailable("Provide today, tomorrow, or a date in YYYY-MM-DD format.")
     if date not in {"today", "tomorrow"}:
@@ -104,7 +112,7 @@ async def get_weather(location: str, date: str) -> dict[str, object]:
             break
     results = places.get("results") or []
     if not isinstance(results, list) or not results:
-        raise WeatherUnavailable("City not found; use a city with a region or country.")
+        raise WeatherLocationNotFound("City not found; use a city with a region or country.")
     place = results[0]
     if not isinstance(place, dict):
         raise WeatherUnavailable("Weather service returned an invalid location.")
@@ -120,7 +128,7 @@ async def get_weather(location: str, date: str) -> dict[str, object]:
         largest = by_population[0].get("population") or 0
         second = by_population[1].get("population") or 0
         if largest < 100_000 or largest < 10 * second:
-            raise WeatherUnavailable("City name is ambiguous; add a region or country.")
+            raise WeatherLocationAmbiguous("City name is ambiguous; add a region or country.")
         place = by_population[0]
     try:
         today = dt.datetime.now(ZoneInfo(place["timezone"])).date()

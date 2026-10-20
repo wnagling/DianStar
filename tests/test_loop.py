@@ -3,7 +3,7 @@
 import unittest
 
 from agent_try.loop import Observation, ToolAction, run_loop
-from agent_try.tools.weather_contract import verify_weather, weather_goal
+from agent_try.tools.weather_contract import verify_weather, weather_date_unspecified, weather_goal
 
 
 class WeatherContractTests(unittest.TestCase):
@@ -13,6 +13,14 @@ class WeatherContractTests(unittest.TestCase):
             {"role": "assistant", "content": "潮州今天气温 25℃。你想查询哪天的天气？"},
         ]
         self.assertTrue(weather_goal("明天", history))
+
+    def test_country_reply_after_clarification_keeps_weather_goal_and_date(self):
+        history = [
+            {"role": "user", "content": "La Paz 今天多少度？"},
+            {"role": "assistant", "content": "“La Paz”可能对应多个地点。你要查哪个国家或地区的“La Paz”？"},
+        ]
+        self.assertTrue(weather_goal("玻利维亚", history))
+        self.assertFalse(weather_date_unspecified("玻利维亚", history))
 
     def test_wrong_date_does_not_complete_even_with_matching_temperatures(self):
         observation = Observation(
@@ -40,6 +48,27 @@ class WeatherContractTests(unittest.TestCase):
             question="潮州明天气温？", date_unspecified=False,
         )
         self.assertEqual(verdict.status, "retry")
+
+    def test_english_weather_answer_must_stay_in_english(self):
+        observation = Observation(
+            ToolAction("get_weather", {"location": "Beijing", "date": "today"}),
+            {"location": "北京, 中国", "date": "2026-10-20",
+             "temperature_current_c": 8.8,
+             "temperature_max_c": 13.2, "temperature_min_c": 7.5},
+        )
+        question = "what's the temeprature of beijing"
+        self.assertTrue(weather_goal(question, []))
+        chinese = verify_weather(
+            "北京今天最高气温 13.2°C，最低气温 7.5°C。当前气温 8.8°C。",
+            [observation], question=question, date_unspecified=True,
+        )
+        self.assertEqual(chinese.status, "retry")
+        english = verify_weather(
+            "Beijing today: current temperature 8.8°C, high 13.2°C, low 7.5°C.",
+            [observation], question=question, date_unspecified=True,
+        )
+        self.assertEqual(english.status, "completed")
+        self.assertIn("Which date", english.answer)
 
 
 class LoopTests(unittest.IsolatedAsyncioTestCase):

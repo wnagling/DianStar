@@ -22,6 +22,50 @@ from agent_try.tools.weather_contract import WEATHER_REPLY_INSTRUCTIONS
 
 
 class DeepSeekTests(unittest.IsolatedAsyncioTestCase):
+    @patch("agent_try.agent.get_weather", new_callable=AsyncMock)
+    @patch("agent_try.deepseek.AsyncOpenAI")
+    async def test_ambiguous_city_asks_for_country_instead_of_error(self, client_class, weather):
+        from agent_try.tools.weather import WeatherLocationAmbiguous
+
+        weather.side_effect = WeatherLocationAmbiguous("City name is ambiguous.")
+        call = SimpleNamespace(id="call_1", function=SimpleNamespace(
+            name="get_weather", arguments='{"location":"La Paz","date":"today"}',
+        ))
+        client = client_class.return_value
+        client.chat.completions.create = AsyncMock(return_value=SimpleNamespace(choices=[
+            SimpleNamespace(finish_reason="tool_calls",
+                            message=SimpleNamespace(content=None, tool_calls=[call])),
+        ]))
+        with tempfile.TemporaryDirectory() as temporary:
+            env_file = Path(temporary) / ".env"
+            env_file.write_text("DEEPSEEK_API_KEY=test-key\n", encoding="utf-8")
+            history = []
+            answer = await ask_deepseek('"La Paz 今天多少度？', history=history, env_file=env_file)
+        self.assertIn("La Paz", answer)
+        self.assertIn("哪个国家", answer)
+        self.assertEqual(history[-1]["content"], answer)
+        client.chat.completions.create.assert_awaited_once()
+
+    @patch("agent_try.agent.get_weather", new_callable=AsyncMock)
+    @patch("agent_try.deepseek.AsyncOpenAI")
+    async def test_unknown_city_asks_to_check_spelling(self, client_class, weather):
+        from agent_try.tools.weather import WeatherLocationNotFound
+
+        weather.side_effect = WeatherLocationNotFound("City not found.")
+        call = SimpleNamespace(id="call_1", function=SimpleNamespace(
+            name="get_weather", arguments='{"location":"Xyzcity","date":"today"}',
+        ))
+        client = client_class.return_value
+        client.chat.completions.create = AsyncMock(return_value=SimpleNamespace(choices=[
+            SimpleNamespace(finish_reason="tool_calls",
+                            message=SimpleNamespace(content=None, tool_calls=[call])),
+        ]))
+        with tempfile.TemporaryDirectory() as temporary:
+            env_file = Path(temporary) / ".env"
+            env_file.write_text("DEEPSEEK_API_KEY=test-key\n", encoding="utf-8")
+            answer = await ask_deepseek("Xyzcity weather?", env_file=env_file)
+        self.assertIn("Xyzcity", answer)
+        self.assertIn("spelling", answer)
     async def test_wrong_date_feedback_allows_another_tool_call(self):
         call = SimpleNamespace(id="call_2", function=SimpleNamespace(
             name="get_weather", arguments='{"location":"潮州","date":"tomorrow"}',

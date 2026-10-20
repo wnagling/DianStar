@@ -5,7 +5,10 @@ import unittest
 from unittest.mock import AsyncMock, patch
 from zoneinfo import ZoneInfo
 
-from agent_try.tools.weather import FORECAST_URL, GEOCODING_URL, WeatherUnavailable, get_weather
+from agent_try.tools.weather import (
+    FORECAST_URL, GEOCODING_URL, WeatherLocationAmbiguous,
+    WeatherLocationNotFound, WeatherUnavailable, get_weather,
+)
 
 
 PLACE = {
@@ -35,7 +38,7 @@ class WeatherTests(unittest.IsolatedAsyncioTestCase):
             {},
             {"results": [{**PLACE, "name": "乌鲁木齐南", "admin1": "新疆"}]},
         ]
-        with self.assertRaisesRegex(WeatherUnavailable, "City not found"):
+        with self.assertRaisesRegex(WeatherLocationNotFound, "City not found"):
             await get_weather("乌鲁木齐市", "today")
         self.assertEqual(get_json.await_count, 2)
 
@@ -107,7 +110,7 @@ class WeatherTests(unittest.IsolatedAsyncioTestCase):
     @patch("agent_try.tools.weather._get_json", new_callable=AsyncMock)
     async def test_ambiguous_city_requests_qualification(self, get_json):
         get_json.return_value = {"results": [PLACE, {**PLACE, "country": "Other", "population": 17_000_000}]}
-        with self.assertRaisesRegex(WeatherUnavailable, "ambiguous"):
+        with self.assertRaisesRegex(WeatherLocationAmbiguous, "ambiguous"):
             await get_weather("北京", "today")
         get_json.assert_awaited_once()
 

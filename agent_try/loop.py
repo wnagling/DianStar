@@ -28,7 +28,7 @@ class Verdict:
 
 async def run_loop(
     think: Callable[[list[Observation], Verdict | None], Awaitable[str | ToolAction]],
-    act: Callable[[ToolAction], Awaitable[Observation]],
+    act: Callable[[ToolAction], Awaitable[Observation | Verdict]],
     verify: Callable[[str, list[Observation]], Verdict],
     *,
     max_steps: int = 4,
@@ -52,5 +52,10 @@ async def run_loop(
         if key in used_calls:
             raise ValueError("DeepSeek repeated the same tool call.")
         used_calls.add(key)
-        observations.append(await act(decision))
+        outcome = await act(decision)
+        if isinstance(outcome, Verdict):
+            if outcome.status == "needs_input" and outcome.answer:
+                return outcome.answer
+            raise ValueError("Agent returned an invalid tool verdict.")
+        observations.append(outcome)
     raise ValueError("DeepSeek did not complete the task within the loop limit.")
