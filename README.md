@@ -1,6 +1,6 @@
 # agentTry
 
-agentTry 是一个用 Python 编写的本地命令行 Agent 学习项目。现在可以通过 OpenAI 兼容 SDK 调用 DeepSeek、进行单次问答或可恢复的终端对话，并使用天气工具查询城市气温。项目正在以小步骤建立 Think → Act → Observe 工具循环；长期方向记录在 [产品文档](./产品文档.md)。
+agentTry 是一个用 Python 编写的本地命令行 Agent 学习项目。现在可以通过 OpenAI 兼容 SDK 调用 DeepSeek、进行单次问答或可恢复的终端对话，并使用天气工具查询城市气温。程序模块的关系见 [当前架构](./docs/架构.md)，长期方向见 [产品文档](./docs/产品文档.md)。
 
 ## 当前功能
 
@@ -56,13 +56,13 @@ Copy-Item .env.example .env
 
 ## 天气工具怎样工作
 
-`agent_try/deepseek.py` 把工具名称及参数说明发给 DeepSeek。模型请求 `get_weather(location, date)` 后，`agent_try/tools/weather.py` 用 [Open-Meteo Geocoding API](https://open-meteo.com/en/docs/geocoding-api) 查城市，再用[天气预报 API](https://open-meteo.com/en/docs) 查气温。程序把工具结果交回模型，`agent_try/loop.py` 继续循环，`agent_try/weather_contract.py` 检查候选回答，验收通过后才显示。
+`agent_try/agent.py` 编排本轮任务；`agent_try/deepseek.py` 把工具名称及参数说明发给 DeepSeek。模型请求 `get_weather(location, date)` 后，`agent_try/tools/weather.py` 用 [Open-Meteo Geocoding API](https://open-meteo.com/en/docs/geocoding-api) 查城市，再用[天气预报 API](https://open-meteo.com/en/docs) 查气温。程序把工具结果交回模型，`agent_try/loop.py` 继续循环，`agent_try/weather_contract.py` 检查候选回答，验收通过后才显示。
 
 `date` 可为 `today`、`tomorrow` 或未来 7 天内的 `YYYY-MM-DD`。查询以目的地当地日期为准。中文城市名会尝试有无“市”字及部分自治区简称；回退结果必须与城市名匹配。重名地点无法可靠区分时，需要用户补充地区或国家。当前气温可能暂不可用；最高、最低气温为预报，当前气温也来自天气模型，并非温度计实测值。终端回答不附带数据来源文字，来源在本节记录。查询需要联网；使用 Open-Meteo 免费接口前请查看其[使用条件](https://open-meteo.com/en/terms)。
 
 ## 密钥与权限边界
 
-`.env` 和 `.local/` 已列入 `.gitignore`，因此不会因普通的 `git add .` 进入仓库。程序会在本机读取 Key 并通过 SDK 发送请求；DeepSeek 模型收到用户消息和工具结果，不需要收到 Key。**有本机项目文件权限的开发工具仍可能读取 `.env`**；Git 忽略规则不构成访问控制。添加文件工具之前的密钥隔离待办见 [2026-10-21 待办](./开发日志/2026-10-21-待办.md)。
+`.env` 和 `.local/` 已列入 `.gitignore`，因此不会因普通的 `git add .` 进入仓库。程序会在本机读取 Key 并通过 SDK 发送请求；DeepSeek 模型收到用户消息和工具结果，不需要收到 Key。**有本机项目文件权限的开发工具仍可能读取 `.env`**；Git 忽略规则不构成访问控制。添加文件工具之前的密钥隔离待办见 [2026-10-21 待办](./docs/开发日志/2026-10-21-待办.md)。
 
 ## 文件说明
 
@@ -76,21 +76,23 @@ Copy-Item .env.example .env
 | `agent_try/__init__.py` | Python 包入口 |
 | `agent_try/__main__.py` | 命令行参数、交互提示、会话指令和错误展示 |
 | `agent_try/conversations.py` | 会话 ID、JSON 持久化、恢复和上下文起点 |
-| `agent_try/deepseek.py` | DeepSeek SDK 请求、工具定义与响应转换 |
+| `agent_try/agent.py` | 一轮任务的编排、工具分派与回答保存 |
+| `agent_try/deepseek.py` | DeepSeek SDK 请求、消息转换与异常工具标记解析 |
 | `agent_try/loop.py` | 有次数上限的 Think → Act → Observe 循环 |
-| `agent_try/weather_contract.py` | 天气任务的完成条件及回答核对 |
+| `agent_try/weather_contract.py` | 天气任务提示、发送给模型的数据及回答核对 |
 | `agent_try/tools/__init__.py` | 工具包入口 |
-| `agent_try/tools/weather.py` | 城市解析、日期校验和 Open-Meteo 查询 |
+| `agent_try/tools/weather.py` | 天气工具定义、城市解析、日期校验和 Open-Meteo 查询 |
 | `tests/test_deepseek.py` | 问答、会话和模型工具调用的离线测试 |
 | `tests/test_loop.py` | 循环停止规则和天气完成条件测试 |
 | `tests/test_weather.py` | 地名、日期与天气数据解析测试 |
-| `产品文档.md` | 长期产品目标；其中的规划不代表已经实现 |
-| `编程语言选型.md` | Python 选型与历史 Rust 原型的取舍 |
-| `参考技术.md` | 供后续设计参考的外部技术笔记 |
-| `开发日志/2026-10-13.md` | 历史 Rust 阶段的开发记录 |
-| `开发日志/2026-10-18.md` | Python 问答、终端会话与保存功能的开发记录 |
-| `开发日志/2026-10-19.md` | 天气工具及真实调用的开发记录 |
-| `开发日志/2026-10-21-待办.md` | 文件读取工具和 API Key 隔离的后续任务 |
+| `docs/架构.md` | 当前模块边界、任务流程和数据权限说明 |
+| `docs/产品文档.md` | 长期产品目标；其中的规划不代表已经实现 |
+| `docs/编程语言选型.md` | Python 选型与历史 Rust 原型的取舍 |
+| `docs/参考技术.md` | 供后续设计参考的外部技术笔记 |
+| `docs/开发日志/2026-10-13.md` | 历史 Rust 阶段的开发记录 |
+| `docs/开发日志/2026-10-18.md` | Python 问答、终端会话与保存功能的开发记录 |
+| `docs/开发日志/2026-10-19.md` | 天气工具及真实调用的开发记录 |
+| `docs/开发日志/2026-10-21-待办.md` | 文件读取工具和 API Key 隔离的后续任务 |
 
 运行时还会出现两个**不进入 Git**的本地路径：`.env` 存放用户自己的 Key，`.local/conversations/` 存放会话。此前的 Rust 只读原型保存在 Git 历史提交 `7729740`，不属于当前 Python 运行入口。
 

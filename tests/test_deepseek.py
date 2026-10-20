@@ -14,10 +14,34 @@ from openai import APIConnectionError
 
 from agent_try.__main__ import main
 from agent_try.conversations import Conversation
-from agent_try.deepseek import WEATHER_REPLY_INSTRUCTIONS, WEATHER_TOOL, ask_deepseek
+from agent_try.agent import ask_deepseek
+from agent_try.deepseek import DeepSeekSession
+from agent_try.loop import Observation, ToolAction, Verdict
+from agent_try.tools.weather import WEATHER_TOOL
+from agent_try.weather_contract import WEATHER_REPLY_INSTRUCTIONS
 
 
 class DeepSeekTests(unittest.IsolatedAsyncioTestCase):
+    async def test_wrong_date_feedback_allows_another_tool_call(self):
+        call = SimpleNamespace(id="call_2", function=SimpleNamespace(
+            name="get_weather", arguments='{"location":"潮州","date":"tomorrow"}',
+        ))
+        response = SimpleNamespace(choices=[SimpleNamespace(
+            finish_reason="tool_calls", message=SimpleNamespace(content=None, tool_calls=[call]),
+        )])
+        create = AsyncMock(return_value=response)
+        client = SimpleNamespace(chat=SimpleNamespace(completions=SimpleNamespace(create=create)))
+        session = DeepSeekSession(client, "潮州明天气温？", [], WEATHER_REPLY_INSTRUCTIONS, [WEATHER_TOOL])
+        observation = Observation(
+            ToolAction("get_weather", {"location": "潮州", "date": "today"}),
+            {"location": "潮州", "date": "2026-10-20"},
+        )
+        action = await session.think(
+            [observation], Verdict("retry", "请重新查询用户指定的日期。", retry_tool=True),
+        )
+        self.assertEqual(action.arguments["date"], "tomorrow")
+        self.assertEqual(client.chat.completions.create.await_args.kwargs["tool_choice"], "auto")
+
     @patch("agent_try.deepseek.AsyncOpenAI")
     async def test_empty_local_key_stops_before_network(self, client_class):
         with tempfile.TemporaryDirectory() as temporary:
@@ -62,7 +86,7 @@ class DeepSeekTests(unittest.IsolatedAsyncioTestCase):
             extra_body={"thinking": {"type": "disabled"}},
         )
 
-    @patch("agent_try.deepseek.get_weather", new_callable=AsyncMock)
+    @patch("agent_try.agent.get_weather", new_callable=AsyncMock)
     @patch("agent_try.deepseek.AsyncOpenAI")
     async def test_weather_tool_result_is_returned_to_deepseek(self, client_class, weather):
         weather.return_value = {"location": "北京", "date": "2026-10-20", "temperature_max_c": 18.0,
@@ -95,7 +119,7 @@ class DeepSeekTests(unittest.IsolatedAsyncioTestCase):
         self.assertIn('"temperature_max_c": 18.0', sent[3]["content"])
         self.assertNotIn("source", sent[3]["content"])
 
-    @patch("agent_try.deepseek.get_weather", new_callable=AsyncMock)
+    @patch("agent_try.agent.get_weather", new_callable=AsyncMock)
     @patch("agent_try.deepseek.AsyncOpenAI")
     async def test_weather_answer_requires_evidence_and_retries_bad_temperature(self, client_class, weather):
         weather.return_value = {"location": "潮州", "date": "2026-10-20",
@@ -157,7 +181,7 @@ class DeepSeekTests(unittest.IsolatedAsyncioTestCase):
                 await ask_deepseek("潮州今天天气多少度？", history=history, env_file=env_file)
         self.assertEqual(history, [])
 
-    @patch("agent_try.deepseek.get_weather", new_callable=AsyncMock)
+    @patch("agent_try.agent.get_weather", new_callable=AsyncMock)
     @patch("agent_try.deepseek.AsyncOpenAI")
     async def test_complete_raw_dsml_executes_weather_without_leaking_markup(self, client_class, weather):
         weather.return_value = {
@@ -200,7 +224,7 @@ class DeepSeekTests(unittest.IsolatedAsyncioTestCase):
         self.assertIn('"temperature_current_c": 25.2', sent[-1]["content"])
         self.assertNotIn("current_time", sent[-1]["content"])
 
-    @patch("agent_try.deepseek.get_weather", new_callable=AsyncMock)
+    @patch("agent_try.agent.get_weather", new_callable=AsyncMock)
     @patch("agent_try.deepseek.AsyncOpenAI")
     async def test_repeated_raw_tool_markup_uses_clean_result_context(self, client_class, weather):
         weather.return_value = {"location": "潮州", "date": "2026-10-19",

@@ -23,10 +23,11 @@ class Verdict:
     status: str  # completed, needs_input, or retry
     feedback: str = ""
     answer: str = ""
+    retry_tool: bool = False
 
 
 async def run_loop(
-    think: Callable[[list[Observation], str], Awaitable[str | ToolAction]],
+    think: Callable[[list[Observation], Verdict | None], Awaitable[str | ToolAction]],
     act: Callable[[ToolAction], Awaitable[Observation]],
     verify: Callable[[str, list[Observation]], Verdict],
     *,
@@ -34,18 +35,18 @@ async def run_loop(
 ) -> str:
     """Advance until a verified answer, a clarification, or a bounded failure."""
     observations: list[Observation] = []
-    feedback = ""
+    feedback: Verdict | None = None
     used_calls: set[tuple[str, tuple[tuple[str, str], ...]]] = set()
     for _ in range(max_steps):
         decision = await think(observations, feedback)
-        feedback = ""
+        feedback = None
         if isinstance(decision, str):
             verdict = verify(decision, observations)
             if verdict.status in {"completed", "needs_input"}:
                 return verdict.answer or decision
             if verdict.status != "retry" or not verdict.feedback:
                 raise ValueError("Agent returned an invalid completion verdict.")
-            feedback = verdict.feedback
+            feedback = verdict
             continue
         key = (decision.name, tuple(sorted(decision.arguments.items())))
         if key in used_calls:

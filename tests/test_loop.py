@@ -27,6 +27,7 @@ class WeatherContractTests(unittest.TestCase):
         )
         self.assertEqual(verdict.status, "retry")
         self.assertIn("重新查询", verdict.feedback)
+        self.assertTrue(verdict.retry_tool)
 
     def test_swapped_high_and_low_are_rejected(self):
         observation = Observation(

@@ -1,5 +1,6 @@
 """Completion rules for weather questions, separate from the agent loop."""
 
+import json
 import re
 from collections import Counter
 
@@ -9,6 +10,19 @@ from .loop import Observation, Verdict
 WEATHER_WORDS = re.compile(r"天气|气温|温度|多少度|最高温|最低温|weather|temperature", re.I)
 DATE_WORDS = re.compile(r"今天|今日|明天|后天|\d{4}-\d{2}-\d{2}|\d{1,2}月\d{1,2}日|today|tomorrow", re.I)
 TEMPERATURES = re.compile(r"(-?\d+(?:\.\d+)?)\s*(?:°\s*[Cc]|℃|摄氏度|度)")
+WEATHER_REPLY_INSTRUCTIONS = (
+    "天气问题必须先调用 get_weather，缺少日期时默认 today；缺少地点时询问用户地点。"
+    "请根据用户的问题和天气查询结果回答。今天要回答当前气温及当日最高、最低气温；"
+    "未来日期回答最高、最低气温。当前气温为空时说明暂不可用。"
+    "不要写数据来源、观测时间或‘模型估计’，不要输出工具调用标记。"
+    "只使用查询结果中的气温，准确写出查询到的城市，不要编造数值。"
+)
+
+
+def weather_data(weather: dict[str, object]) -> str:
+    """Only send the model the fields needed to answer."""
+    fields = ("location", "date", "temperature_current_c", "temperature_max_c", "temperature_min_c")
+    return json.dumps({key: weather[key] for key in fields if key in weather}, ensure_ascii=False)
 
 
 def _labeled_temperature(answer: str, label: str) -> float | None:
@@ -39,10 +53,10 @@ def verify_weather(
     if (re.search(r"今天|今日|today", question, re.I) and requested == "tomorrow") or (
         re.search(r"明天|tomorrow", question, re.I) and requested == "today"
     ):
-        return Verdict("retry", "请重新查询用户指定的日期，再根据新结果回答。")
+        return Verdict("retry", "请重新查询用户指定的日期，再根据新结果回答。", retry_tool=True)
     explicit_date = re.search(r"\d{4}-\d{2}-\d{2}", question)
     if explicit_date and weather["date"] != explicit_date.group():
-        return Verdict("retry", "请重新查询用户指定的日期，再根据新结果回答。")
+        return Verdict("retry", "请重新查询用户指定的日期，再根据新结果回答。", retry_tool=True)
 
     expected = [weather["temperature_max_c"], weather["temperature_min_c"]]
     if "temperature_current_c" in weather and weather["temperature_current_c"] is not None:

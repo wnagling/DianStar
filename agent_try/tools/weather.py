@@ -9,6 +9,22 @@ import httpx
 
 GEOCODING_URL = "https://geocoding-api.open-meteo.com/v1/search"
 FORECAST_URL = "https://api.open-meteo.com/v1/forecast"
+WEATHER_TOOL = {
+    "type": "function",
+    "function": {
+        "name": "get_weather",
+        "description": "Get a city's temperature in Celsius. For today, returns current temperature and the day's high and low; future dates return the high and low. If date is missing, use today. Ask for a city if missing; never guess a city. Date must be today, tomorrow, or YYYY-MM-DD within the next 7 days.",
+        "parameters": {
+            "type": "object",
+            "properties": {
+                "location": {"type": "string", "description": "City, optionally followed by a region or country"},
+                "date": {"type": "string", "description": "today, tomorrow, or YYYY-MM-DD"},
+            },
+            "required": ["location", "date"],
+            "additionalProperties": False,
+        },
+    },
+}
 ADMIN_ALIASES = {
     "新疆维吾尔自治区": "新疆",
     "内蒙古自治区": "内蒙古",

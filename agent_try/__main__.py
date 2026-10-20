@@ -7,7 +7,7 @@ import sys
 from openai import APIConnectionError, APIStatusError, APITimeoutError, OpenAIError
 
 from .conversations import Conversation, list_conversation_ids
-from .deepseek import ask_deepseek
+from .agent import ask_deepseek
 
 
 def _answer(question: str, conversation: Conversation | None = None) -> bool:
