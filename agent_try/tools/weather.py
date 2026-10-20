@@ -156,6 +156,7 @@ async def get_weather(location: str, date: str) -> dict[str, object]:
         raise WeatherUnavailable("Forecast temperatures are unavailable for that date.") from error
     result = {
         "location": ", ".join(filter(None, (place.get("name"), place.get("admin1"), place.get("country")))),
+        "country_code": place.get("country_code"),
         "date": date,
         "temperature_max_c": maximum,
         "temperature_min_c": minimum,

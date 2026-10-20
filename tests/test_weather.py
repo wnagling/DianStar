@@ -10,6 +10,7 @@ from agent_try.tools.weather import FORECAST_URL, GEOCODING_URL, WeatherUnavaila
 
 PLACE = {
     "name": "北京", "admin1": "北京", "country": "中国",
+    "country_code": "CN",
     "latitude": 39.9, "longitude": 116.4, "timezone": "Asia/Shanghai",
     "population": 18_000_000,
 }
@@ -74,6 +75,7 @@ class WeatherTests(unittest.IsolatedAsyncioTestCase):
         ]
         result = await get_weather("北京", "today")
         self.assertEqual(result["date"], today)
+        self.assertEqual(result["country_code"], "CN")
         self.assertEqual(result["temperature_max_c"], 21.4)
         self.assertEqual(result["temperature_min_c"], 9.2)
         self.assertEqual(result["temperature_current_c"], 18.3)

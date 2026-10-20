@@ -1,0 +1,101 @@
+region,city,country_code,query
+Asia,Tokyo,JP
+Asia,Osaka,JP
+Asia,Seoul,KR
+Asia,Beijing,CN
+Asia,Shanghai,CN
+Asia,Urumqi,CN
+Asia,Taipei,TW
+Asia,Hong Kong,HK
+Asia,Singapore,SG
+Asia,Bangkok,TH
+Asia,Hanoi,VN
+Asia,Manila,PH
+Asia,Jakarta,ID
+Asia,Kuala Lumpur,MY
+Asia,Phnom Penh,KH
+Asia,Kathmandu,NP
+Asia,Dhaka,BD
+Asia,New Delhi,IN
+Asia,Mumbai,IN
+Asia,Dubai,AE
+Europe,London,GB
+Europe,Manchester,GB
+Europe,Paris,FR
+Europe,Lyon,FR
+Europe,Berlin,DE
+Europe,Munich,DE
+Europe,Madrid,ES
+Europe,Barcelona,ES
+Europe,Rome,IT
+Europe,Milan,IT
+Europe,Amsterdam,NL
+Europe,Brussels,BE
+Europe,Zurich,CH
+Europe,Vienna,AT
+Europe,Prague,CZ
+Europe,Warsaw,PL
+Europe,Budapest,HU
+Europe,Stockholm,SE
+Europe,Oslo,NO
+Europe,Copenhagen,DK
+Europe,Helsinki,FI
+Europe,Dublin,IE
+Europe,Lisbon,PT
+Europe,Athens,GR,"Athens, Greece"
+Europe,Istanbul,TR
+Africa,Cairo,EG
+Africa,Alexandria,EG
+Africa,Casablanca,MA
+Africa,Rabat,MA
+Africa,Tunis,TN
+Africa,Algiers,DZ
+Africa,Tripoli,LY,"Tripoli, Libya"
+Africa,Khartoum,SD
+Africa,Addis Ababa,ET
+Africa,Nairobi,KE
+Africa,Mombasa,KE
+Africa,Kampala,UG
+Africa,Kigali,RW
+Africa,Dar es Salaam,TZ
+Africa,Lagos,NG
+Africa,Abuja,NG
+Africa,Accra,GH
+Africa,Dakar,SN
+Africa,Johannesburg,ZA
+Africa,Cape Town,ZA
+North America,New York,US
+North America,Los Angeles,US
+North America,Chicago,US
+North America,San Francisco,US
+North America,Seattle,US
+North America,Miami,US
+North America,Toronto,CA
+North America,Vancouver,CA,"Vancouver, Canada"
+North America,Montreal,CA
+North America,Mexico City,MX
+North America,Guadalajara,MX
+North America,Monterrey,MX
+North America,Havana,CU
+North America,San Jose,CR,"San Jose, Costa Rica"
+North America,Panama City,PA
+South America,Bogota,CO
+South America,Medellin,CO
+South America,Quito,EC
+South America,Lima,PE
+South America,La Paz,BO,"La Paz, Bolivia"
+South America,Santiago,CL
+South America,Valparaiso,CL,"Valparaiso, Chile"
+South America,Buenos Aires,AR
+South America,Cordoba,AR
+South America,Montevideo,UY
+South America,Asuncion,PY
+South America,Sao Paulo,BR
+Oceania,Sydney,AU
+Oceania,Melbourne,AU
+Oceania,Brisbane,AU
+Oceania,Perth,AU
+Oceania,Auckland,NZ
+Oceania,Wellington,NZ
+Oceania,Suva,FJ
+Oceania,Port Moresby,PG

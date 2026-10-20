@@ -85,7 +85,11 @@ Copy-Item .env.example .env
 | `tests/test_deepseek.py` | 问答、会话和模型工具调用的离线测试 |
 | `tests/test_loop.py` | 循环停止规则和天气完成条件测试 |
 | `tests/test_weather.py` | 地名、日期与天气数据解析测试 |
+| `tests/data/weather_cities.csv` | 覆盖全球六个地区的 100 个城市及预期国家代码 |
+| `scripts/__init__.py` | 验证脚本包入口 |
+| `scripts/check_weather_cities.py` | 联网批量检查天气工具并生成逐城市报告 |
 | `docs/架构.md` | 当前模块边界、任务流程和数据权限说明 |
+| `docs/测试记录-2026-10-20.md` | 离线、真实问答和 100 城市天气查询的测试结果与边界 |
 | `docs/产品文档.md` | 长期产品目标；其中的规划不代表已经实现 |
 | `docs/编程语言选型.md` | Python 选型与历史 Rust 原型的取舍 |
 | `docs/参考技术.md` | 供后续设计参考的外部技术笔记 |
@@ -103,3 +107,13 @@ Copy-Item .env.example .env
 ```
 
 离线测试使用模拟的模型与天气响应，不需要真实 Key。真实 DeepSeek 问答和天气调用已分别验证；实际联网结果会随时间与服务状态变化。下一步是先界定文件工具可读取的范围和密钥隔离，再添加受限的 `list_files` / `read_file`。
+
+要检查全球 100 个城市的真实天气查询，在项目根目录运行：
+
+```powershell
+.\.venv\Scripts\python.exe -m scripts.check_weather_cities
+```
+
+脚本只调用 Open-Meteo，不读取 `.env`，也不向 DeepSeek 发送请求。它检查返回地点的国家代码、当地日期以及气温字段，把逐项结果写入 `.local/weather_city_report.json`。少量试跑可加 `--limit 3`；任一城市失败时脚本以非零状态退出。联网服务暂时不可用也会记为错误，不能据此断定程序逻辑有误。
+
+本次测试的具体结果见 [2026-10-20 测试记录](./docs/测试记录-2026-10-20.md)。
