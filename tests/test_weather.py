@@ -43,16 +43,12 @@ class WeatherTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(get_json.await_count, 2)
 
     @patch("agent_try.tools.weather._get_json", new_callable=AsyncMock)
-    async def test_autonomous_region_qualifier_is_shortened_for_lookup(self, get_json):
-        today = dt.datetime.now(ZoneInfo("Asia/Shanghai")).date().isoformat()
-        get_json.side_effect = [
-            {},
-            {"results": [{**PLACE, "name": "乌鲁木齐", "admin1": "新疆"}]},
-            {"daily": {"time": [today], "temperature_2m_max": [16], "temperature_2m_min": [5]}},
-        ]
-        result = await get_weather("乌鲁木齐市，新疆维吾尔自治区，中国", "today")
-        self.assertIn("乌鲁木齐", result["location"])
-        self.assertEqual(get_json.await_args_list[1].args[1]["name"], "乌鲁木齐, 新疆, 中国")
+    async def test_tool_does_not_invent_a_shorter_region_name(self, get_json):
+        get_json.side_effect = [{}, {}]
+        with self.assertRaises(WeatherLocationNotFound):
+            await get_weather("乌鲁木齐市，新疆维吾尔自治区，中国", "today")
+        self.assertEqual(get_json.await_args_list[0].args[1]["name"], "乌鲁木齐市, 新疆维吾尔自治区, 中国")
+        self.assertEqual(get_json.await_args_list[1].args[1]["name"], "乌鲁木齐, 新疆维吾尔自治区, 中国")
 
     @patch("agent_try.tools.weather._get_json", new_callable=AsyncMock)
     async def test_chinese_city_suffix_fallback(self, get_json):

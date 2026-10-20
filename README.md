@@ -58,7 +58,7 @@ Copy-Item .env.example .env
 
 `agent_try/agent.py` 编排本轮任务；`agent_try/deepseek.py` 把工具名称及参数说明发给 DeepSeek。模型请求 `get_weather(location, date)` 后，`agent_try/tools/weather.py` 用 [Open-Meteo Geocoding API](https://open-meteo.com/en/docs/geocoding-api) 查城市，再用[天气预报 API](https://open-meteo.com/en/docs) 查气温。程序把工具结果交回模型，`agent_try/loop.py` 继续循环，`agent_try/tools/weather_contract.py` 检查候选回答，验收通过后才显示。
 
-`date` 可为 `today`、`tomorrow` 或未来 7 天内的 `YYYY-MM-DD`。查询以目的地当地日期为准。中文城市名会尝试有无“市”字及部分自治区简称；回退结果必须与城市名匹配。重名地点无法可靠区分时，需要用户补充地区或国家。当前气温可能暂不可用；最高、最低气温为预报，当前气温也来自天气模型，并非温度计实测值。终端回答不附带数据来源文字，来源在本节记录。查询需要联网；使用 Open-Meteo 免费接口前请查看其[使用条件](https://open-meteo.com/en/terms)。
+`date` 可为 `today`、`tomorrow` 或未来 7 天内的 `YYYY-MM-DD`。查询以目的地当地日期为准。天气工具只统一逗号格式，并尝试中文城市名有无“市”字；它不保存自治区简称表。地名没有结果时，模型可结合用户原话改写同一城市的地区写法，再查询一次；程序核对城市和明确给出的国家，仍找不到就向用户追问。重名地点无法可靠区分时，也需要用户补充地区或国家。当前气温可能暂不可用；最高、最低气温为预报，当前气温也来自天气模型，并非温度计实测值。终端回答不附带数据来源文字，来源在本节记录。查询需要联网；使用 Open-Meteo 免费接口前请查看其[使用条件](https://open-meteo.com/en/terms)。
 
 ## 密钥与权限边界
 

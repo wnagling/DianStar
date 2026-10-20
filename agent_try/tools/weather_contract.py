@@ -50,6 +50,20 @@ def location_clarification(location: str, question: str, *, ambiguous: bool) -> 
     return f"我没找到“{city}”。你能检查城市名称的拼写，或告诉我它所在的国家或地区吗？"
 
 
+def same_weather_city(first: str, second: str) -> bool:
+    """Allow a revised region, but keep the city and an explicit country."""
+    def parts(location: str) -> list[str]:
+        return [part.strip(" \"'“”‘’").casefold()
+                for part in location.replace("，", ",").split(",")]
+
+    original, revised = parts(first), parts(second)
+    original_city = original[0].removesuffix("市")
+    revised_city = revised[0].removesuffix("市")
+    if not original_city or original_city != revised_city:
+        return False
+    return len(original) < 3 or (len(revised) >= 3 and original[-1] == revised[-1])
+
+
 def weather_goal(question: str, history: list[dict[str, str]] | None) -> bool:
     if WEATHER_WORDS.search(question):
         return True

@@ -25,15 +25,6 @@ WEATHER_TOOL = {
         },
     },
 }
-ADMIN_ALIASES = {
-    "新疆维吾尔自治区": "新疆",
-    "内蒙古自治区": "内蒙古",
-    "广西壮族自治区": "广西",
-    "宁夏回族自治区": "宁夏",
-    "西藏自治区": "西藏",
-}
-
-
 class WeatherUnavailable(Exception):
     """The requested forecast cannot be returned reliably."""
 
@@ -60,28 +51,18 @@ async def _get_json(url: str, params: dict[str, object]) -> dict:
 
 
 def _geocoding_candidates(location: str) -> list[str]:
-    """Try common Chinese city and province forms without dropping the region."""
-    query = location.strip().replace("，", ",")
-    city, comma, rest = query.partition(",")
-    city = city.strip()
-    suffix = f",{rest}" if comma else ""
-    first_qualifier, next_comma, remaining = rest.partition(",")
-    qualifier = first_qualifier.strip()
-    shorter = ADMIN_ALIASES.get(qualifier, qualifier)
-    if shorter == qualifier and qualifier.endswith(("省", "市")):
-        shorter = qualifier[:-1]
-    normalized_suffix = f", {shorter}" if comma else ""
-    if next_comma:
-        normalized_suffix += f", {remaining.strip()}"
+    """Normalize punctuation and try a Chinese city with or without 市."""
+    parts = [part.strip() for part in location.strip().replace("，", ",").split(",")]
+    query = ", ".join(parts)
+    city = parts[0]
+    suffix = f", {', '.join(parts[1:])}" if len(parts) > 1 else ""
     city_variant = None
     if re.fullmatch(r"[\u4e00-\u9fff]{2,8}", city):
         city_variant = city[:-1] if city.endswith("市") else city + "市"
     candidates = [query]
     if city_variant:
-        candidates.append(city_variant + normalized_suffix)
         candidates.append(city_variant + suffix)
-    candidates.append(city + normalized_suffix)
-    return list(dict.fromkeys(candidates))
+    return candidates
 
 
 async def get_weather(location: str, date: str) -> dict[str, object]:

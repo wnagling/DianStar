@@ -9,7 +9,7 @@ from .tools.weather import (
     WeatherUnavailable, get_weather,
 )
 from .tools.weather_contract import (
-    WEATHER_REPLY_INSTRUCTIONS, location_clarification,
+    WEATHER_REPLY_INSTRUCTIONS, location_clarification, same_weather_city,
     verify_weather, weather_data, weather_date_unspecified, weather_goal,
 )
 
@@ -31,10 +31,19 @@ async def ask_deepseek(
     session = DeepSeekSession(
         client, question, cleaned_history, WEATHER_REPLY_INSTRUCTIONS, [WEATHER_TOOL],
     )
+    first_failed_location: str | None = None
+    not_found_count = 0
 
     async def act(action: ToolAction) -> Observation | Verdict:
+        nonlocal first_failed_location, not_found_count
         if action.name != "get_weather":
             raise ValueError("DeepSeek returned an unsupported tool call.")
+        if first_failed_location and not same_weather_city(
+            first_failed_location, action.arguments["location"]
+        ):
+            return Verdict("needs_input", answer=location_clarification(
+                first_failed_location, question, ambiguous=False,
+            ))
         try:
             result = await get_weather(action.arguments["location"], action.arguments["date"])
         except WeatherLocationAmbiguous:
@@ -42,9 +51,20 @@ async def ask_deepseek(
                 action.arguments["location"], question, ambiguous=True,
             ))
         except WeatherLocationNotFound:
-            return Verdict("needs_input", answer=location_clarification(
-                action.arguments["location"], question, ambiguous=False,
-            ))
+            not_found_count += 1
+            first_failed_location = first_failed_location or action.arguments["location"]
+            if not_found_count >= 2:
+                return Verdict("needs_input", answer=location_clarification(
+                    first_failed_location, question, ambiguous=False,
+                ))
+            session.observe(action, '{"error":"location_not_found"}')
+            return Verdict(
+                "retry",
+                "地名查询无结果。请结合用户原话识别城市、行政区和国家，"
+                "只调整同一城市的地名写法后重新调用 get_weather 一次。"
+                "可以使用行政区简称；不要更换城市或猜测其他城市。",
+                retry_tool=True,
+            )
         except WeatherUnavailable as error:
             raise ValueError(f"Weather lookup failed: {error}") from error
         session.observe(action, weather_data(result))

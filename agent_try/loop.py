@@ -51,11 +51,14 @@ async def run_loop(
         key = (decision.name, tuple(sorted(decision.arguments.items())))
         if key in used_calls:
             raise ValueError("DeepSeek repeated the same tool call.")
-        used_calls.add(key)
         outcome = await act(decision)
         if isinstance(outcome, Verdict):
             if outcome.status == "needs_input" and outcome.answer:
                 return outcome.answer
+            if outcome.status == "retry" and outcome.feedback:
+                feedback = outcome
+                continue
             raise ValueError("Agent returned an invalid tool verdict.")
+        used_calls.add(key)
         observations.append(outcome)
     raise ValueError("DeepSeek did not complete the task within the loop limit.")

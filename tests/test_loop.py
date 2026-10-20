@@ -3,10 +3,18 @@
 import unittest
 
 from agent_try.loop import Observation, ToolAction, run_loop
-from agent_try.tools.weather_contract import verify_weather, weather_date_unspecified, weather_goal
+from agent_try.tools.weather_contract import (
+    same_weather_city, verify_weather, weather_date_unspecified, weather_goal,
+)
 
 
 class WeatherContractTests(unittest.TestCase):
+    def test_revised_weather_lookup_keeps_city_and_explicit_country(self):
+        original = "乌鲁木齐市，新疆维吾尔自治区，中国"
+        self.assertTrue(same_weather_city(original, "乌鲁木齐, 新疆, 中国"))
+        self.assertFalse(same_weather_city(original, "北京, 新疆, 中国"))
+        self.assertFalse(same_weather_city(original, "乌鲁木齐, 新疆, 美国"))
+
     def test_date_only_follow_up_is_a_weather_goal(self):
         history = [
             {"role": "user", "content": "潮州天气多少度？"},

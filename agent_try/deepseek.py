@@ -134,10 +134,9 @@ class DeepSeekSession:
 
     async def think(self, observations: list[Observation], feedback: Verdict | None) -> str | ToolAction:
         if feedback is not None:
-            self.messages.extend((
-                {"role": "assistant", "content": self.last_candidate},
-                {"role": "user", "content": f"回答验收未通过：{feedback.feedback}"},
-            ))
+            if self.last_candidate:
+                self.messages.append({"role": "assistant", "content": self.last_candidate})
+            self.messages.append({"role": "user", "content": f"回答验收未通过：{feedback.feedback}"})
         for _ in range(2):
             response = await asyncio.wait_for(
                 self.client.chat.completions.create(
@@ -176,6 +175,7 @@ class DeepSeekSession:
 
     def observe(self, action: ToolAction, result_text: str) -> None:
         """Record a tool result without exposing fields withheld by the caller."""
+        self.last_candidate = ""
         self.last_observation_text = result_text
         if action.call_id is None:
             # Raw DSML has no tool_call_id, so resume with a fresh text context.

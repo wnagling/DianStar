@@ -66,6 +66,49 @@ class DeepSeekTests(unittest.IsolatedAsyncioTestCase):
             answer = await ask_deepseek("Xyzcity weather?", env_file=env_file)
         self.assertIn("Xyzcity", answer)
         self.assertIn("spelling", answer)
+
+    @patch("agent_try.agent.get_weather", new_callable=AsyncMock)
+    @patch("agent_try.deepseek.AsyncOpenAI")
+    async def test_model_retries_missing_location_with_shorter_region(self, client_class, weather):
+        from agent_try.tools.weather import WeatherLocationNotFound
+
+        weather.side_effect = [
+            WeatherLocationNotFound("City not found."),
+            {"location": "乌鲁木齐, 新疆, 中国", "date": "2026-10-20",
+             "temperature_current_c": 8.0, "temperature_max_c": 12.0,
+             "temperature_min_c": 2.0},
+        ]
+        first = SimpleNamespace(id="call_1", function=SimpleNamespace(
+            name="get_weather",
+            arguments='{"location":"乌鲁木齐市, 新疆维吾尔自治区, 中国","date":"today"}',
+        ))
+        second = SimpleNamespace(id="call_2", function=SimpleNamespace(
+            name="get_weather", arguments='{"location":"乌鲁木齐, 新疆, 中国","date":"today"}',
+        ))
+        client = client_class.return_value
+        client.chat.completions.create = AsyncMock(side_effect=[
+            SimpleNamespace(choices=[SimpleNamespace(
+                finish_reason="tool_calls", message=SimpleNamespace(content=None, tool_calls=[first]),
+            )]),
+            SimpleNamespace(choices=[SimpleNamespace(
+                finish_reason="tool_calls", message=SimpleNamespace(content=None, tool_calls=[second]),
+            )]),
+            SimpleNamespace(choices=[SimpleNamespace(
+                finish_reason="stop", message=SimpleNamespace(
+                    content="乌鲁木齐今天当前 8°C，最高 12°C，最低 2°C。",
+                ),
+            )]),
+        ])
+        with tempfile.TemporaryDirectory() as temporary:
+            env_file = Path(temporary) / ".env"
+            env_file.write_text("DEEPSEEK_API_KEY=test-key\n", encoding="utf-8")
+            answer = await ask_deepseek("乌鲁木齐市今天天气多少度？", env_file=env_file)
+        self.assertIn("乌鲁木齐今天", answer)
+        self.assertEqual(weather.await_count, 2)
+        self.assertEqual(weather.await_args_list[1].args[0], "乌鲁木齐, 新疆, 中国")
+        retry = client.chat.completions.create.await_args_list[1].kwargs
+        self.assertEqual(retry["tool_choice"], "auto")
+        self.assertIn("location_not_found", str(retry["messages"]))
     async def test_wrong_date_feedback_allows_another_tool_call(self):
         call = SimpleNamespace(id="call_2", function=SimpleNamespace(
             name="get_weather", arguments='{"location":"潮州","date":"tomorrow"}',
