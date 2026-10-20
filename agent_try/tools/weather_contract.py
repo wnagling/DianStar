@@ -4,7 +4,7 @@ import json
 import re
 from collections import Counter
 
-from .loop import Observation, Verdict
+from ..loop import Observation, Verdict
 
 
 WEATHER_WORDS = re.compile(r"天气|气温|温度|多少度|最高温|最低温|weather|temperature", re.I)

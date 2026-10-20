@@ -7,7 +7,7 @@ agentTry 是一个用 Python 编写的本地命令行 Agent 学习项目。现�
 - **DeepSeek 问答**：默认使用 `deepseek-flash`，从项目根目录的 `.env` 读取用户自己的 API Key。每次 API 请求的超时为 60 秒，SDK 自动重试已关闭。
 - **终端连续对话**：为会话生成 ID，将成功的问答保存在本机；可列出、恢复或新建会话。`/compress` 会清空后续请求使用的上下文，但保留聊天记录，目前不生成摘要。
 - **天气查询**：模型选择 `get_weather` 工具，程序向 Open-Meteo 查询地点和天气，再把结果交给模型回答。支持地点当地的今天及未来 7 天；今天提供当前气温和当日最高、最低气温，未来日期提供最高、最低气温。没说日期时先查今天，再问用户想查询哪天。
-- **任务循环与验收**：循环处理模型回答、工具调用和工具结果，并限制最多六次决策。天气回答需要有实际查询结果，且城市、日期和气温要通过 [天气完成条件](./agent_try/weather_contract.py) 的检查；不通过时会要求模型修正。无法解析的工具标记不会显示为最终答案。
+- **任务循环与验收**：循环处理模型回答、工具调用和工具结果，并限制最多六次决策。天气回答需要有实际查询结果，且城市、日期和气温要通过 [天气完成条件](./agent_try/tools/weather_contract.py) 的检查；不通过时会要求模型修正。无法解析的工具标记不会显示为最终答案。
 
 目前**没有**项目文件读取、文件修改或命令执行工具。模型不能凭当前工具读取项目文件，普通问答也不应被当成对项目内容的事实核查。天气地点由用户提供；程序不读取设备位置，也不按公网 IP 猜测位置。
 
@@ -56,7 +56,7 @@ Copy-Item .env.example .env
 
 ## 天气工具怎样工作
 
-`agent_try/agent.py` 编排本轮任务；`agent_try/deepseek.py` 把工具名称及参数说明发给 DeepSeek。模型请求 `get_weather(location, date)` 后，`agent_try/tools/weather.py` 用 [Open-Meteo Geocoding API](https://open-meteo.com/en/docs/geocoding-api) 查城市，再用[天气预报 API](https://open-meteo.com/en/docs) 查气温。程序把工具结果交回模型，`agent_try/loop.py` 继续循环，`agent_try/weather_contract.py` 检查候选回答，验收通过后才显示。
+`agent_try/agent.py` 编排本轮任务；`agent_try/deepseek.py` 把工具名称及参数说明发给 DeepSeek。模型请求 `get_weather(location, date)` 后，`agent_try/tools/weather.py` 用 [Open-Meteo Geocoding API](https://open-meteo.com/en/docs/geocoding-api) 查城市，再用[天气预报 API](https://open-meteo.com/en/docs) 查气温。程序把工具结果交回模型，`agent_try/loop.py` 继续循环，`agent_try/tools/weather_contract.py` 检查候选回答，验收通过后才显示。
 
 `date` 可为 `today`、`tomorrow` 或未来 7 天内的 `YYYY-MM-DD`。查询以目的地当地日期为准。中文城市名会尝试有无“市”字及部分自治区简称；回退结果必须与城市名匹配。重名地点无法可靠区分时，需要用户补充地区或国家。当前气温可能暂不可用；最高、最低气温为预报，当前气温也来自天气模型，并非温度计实测值。终端回答不附带数据来源文字，来源在本节记录。查询需要联网；使用 Open-Meteo 免费接口前请查看其[使用条件](https://open-meteo.com/en/terms)。
 
@@ -79,9 +79,9 @@ Copy-Item .env.example .env
 | `agent_try/agent.py` | 一轮任务的编排、工具分派与回答保存 |
 | `agent_try/deepseek.py` | DeepSeek SDK 请求、消息转换与异常工具标记解析 |
 | `agent_try/loop.py` | 有次数上限的 Think → Act → Observe 循环 |
-| `agent_try/weather_contract.py` | 天气任务提示、发送给模型的数据及回答核对 |
 | `agent_try/tools/__init__.py` | 工具包入口 |
 | `agent_try/tools/weather.py` | 天气工具定义、城市解析、日期校验和 Open-Meteo 查询 |
+| `agent_try/tools/weather_contract.py` | 天气任务提示、发送给模型的数据及回答核对 |
 | `tests/test_deepseek.py` | 问答、会话和模型工具调用的离线测试 |
 | `tests/test_loop.py` | 循环停止规则和天气完成条件测试 |
 | `tests/test_weather.py` | 地名、日期与天气数据解析测试 |

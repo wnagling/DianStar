@@ -18,7 +18,7 @@ from agent_try.agent import ask_deepseek
 from agent_try.deepseek import DeepSeekSession
 from agent_try.loop import Observation, ToolAction, Verdict
 from agent_try.tools.weather import WEATHER_TOOL
-from agent_try.weather_contract import WEATHER_REPLY_INSTRUCTIONS
+from agent_try.tools.weather_contract import WEATHER_REPLY_INSTRUCTIONS
 
 
 class DeepSeekTests(unittest.IsolatedAsyncioTestCase):

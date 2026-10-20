@@ -3,7 +3,7 @@
 import unittest
 
 from agent_try.loop import Observation, ToolAction, run_loop
-from agent_try.weather_contract import verify_weather, weather_goal
+from agent_try.tools.weather_contract import verify_weather, weather_goal
 
 
 class WeatherContractTests(unittest.TestCase):

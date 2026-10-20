@@ -5,7 +5,7 @@ from pathlib import Path
 from .deepseek import ENV_FILE, DeepSeekSession, create_client, usable_history
 from .loop import Observation, ToolAction, Verdict, run_loop
 from .tools.weather import WEATHER_TOOL, WeatherUnavailable, get_weather
-from .weather_contract import (
+from .tools.weather_contract import (
     DATE_WORDS, WEATHER_REPLY_INSTRUCTIONS, verify_weather, weather_data, weather_goal,
 )
 
