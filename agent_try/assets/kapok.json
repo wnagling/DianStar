@@ -1,0 +1,116 @@
+{
+  "variants": [
+    {
+      "columns": 47,
+      "anchor_columns": 42,
+      "rows": [
+        "            ⢠⣦⣄⣀⣀⣀⡀              ⢀⣀⣤⣤⣴⣶⣠⡀      ",
+        "           ⣿⣿⣿⣿⣿⣿⣿⣿⣷⣦⣄        ⢀⣶⣿⣿⣿⣿⣿⣿⣿⣿⢠      ",
+        "         ⢀⣾⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣇⡀   ⢀⣤⣾⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿      ",
+        "         ⢸⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣷⡄⢰⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⠋      ",
+        "          ⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⡅       ",
+        "          ⠙⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⡿⠁       ",
+        "           ⠈⢻⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⡏         ",
+        "             ⠻⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣾⣿⣿⣿⣿⣿⣿⣿⠗⠘⠂        ",
+        "         ⣀⣀⣤⣤⣶⣾⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣀⣀         ",
+        "     ⣀⡀⢼⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣦⡛⣿⣿⣮⣀⠛⢻⣧⢹⣿⣿⣿⣿⣿⣿⣦⡄      ",
+        "  ⢀⣴⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⠿⣙⠻⣿⣷⣄⢻⡘⢹⣿⣿⣿⣿⣿⣿⣶⣀⢀⣀   ",
+        " ⢀⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣯⣬⣑⡸⣷⣿⣿⡮⡓⣡⣿⣿⣿⣿⣿⣿⣿⣿⣿⣾⣿⣧  ",
+        "⣠⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣷⣬⡏⠓⣰⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣷⡀",
+        "⠈⠙⢿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣯⣭⣭⣭⣥⣤⣶⣿⣿⣿⣿⡿⢿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⡇",
+        "   ⠉⠛⠿⠿⣿⡿⠿⠟⠛⠛⠉⠉⢩⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⡿ ",
+        "              ⣰⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⠟⠙⠛⠿⣿⣿⣿⣿⣿⣿⣿⣿⡿⠋⠿⠛⠋  ",
+        "              ⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣷⣶⣶⣶⣿⠿             ",
+        "             ⢀⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⡿⣿⣿⣿⣷⠿⠋           ",
+        "             ⢴⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣷⣿⣷⣦⣤⠿⠋              ",
+        "             ⠐⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⡿⠿⠛⠋                   "
+      ],
+      "colors": [
+        "            gllgggg              llgggggg      ",
+        "           rrrrrrrrllg        llllllllggg      ",
+        "         lrrrrlllggggggg   rlllglllllgggg      ",
+        "         lrlrlggggggllrlllrrrlglggggggggg      ",
+        "          rlgggllrrrrrrrrrrrrrrrrlgggggg       ",
+        "          llgglrrrrrrrrrrrrrrrrrrrlgglgg       ",
+        "           glrrrrrrrrrrrrrrrrrrrrrrllg         ",
+        "             lrrrrrrrrrrrrrrrrrrrrrlllg        ",
+        "         llglrrrrrrrrrrrrrrrddldrrlgll         ",
+        "     lgglgglrrrrrrrrrrrdddddddlrdrrrrlggg      ",
+        "  lllglrlgggrrrrrrrrrrdddddrrdrrddrrlgggggrr   ",
+        " grrrrrrlggglrrrrrrrrrrddddddddddrrlggggggrlr  ",
+        "rrrrrrrlllggggrrrrrrrrrrdrrrrddrrrlgggggggrlggr",
+        "lglrlglrrrrrrrrrrrrrrrddddddrldrrrggggggggrrlgr",
+        "   gggllrrrrlgllrrrrrrrrrrrlldrrrllllllgggrrlr ",
+        "              lrgggllrrrllllrdrrrrllggggggdrr  ",
+        "              rrggggggggggrlddrrrd             ",
+        "             gllrllrllglllgrrlllgdrr           ",
+        "             gglrrrrrrrllgdrrllrr              ",
+        "             ggllllllllgdrrr                   "
+      ]
+    },
+    {
+      "columns": 33,
+      "anchor_columns": 30,
+      "rows": [
+        "        ⣤⣶⣤⣤⣤⣄        ⢀⣠⣤⣴⣶⣶⡤    ",
+        "       ⣰⣿⣿⣿⣿⣿⣿⣿⣷⡀   ⣠⣶⣿⣿⣿⣿⣿⣿⣷⡆   ",
+        "       ⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣷⣀⣾⣿⣿⣿⣿⣿⣿⣿⣿⡟⠁   ",
+        "       ⢻⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⠂    ",
+        "        ⠙⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣟⠁     ",
+        "         ⣈⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⡿ ⠁     ",
+        "   ⢀⡀⢴⣶⣿⣿⣿⣿⣿⣿⣿⣿⣿⣯⡿⣿⣯⡙⠻⣟⢿⣿⣿⣷⣶⣄    ",
+        " ⢀⣾⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⠿⡫⣙⣿⡦⣹⢈⣿⣿⣿⣿⣿⣤⣀  ",
+        "⣠⣾⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣶⣯⣻⠫⢠⣾⣿⣿⣿⣿⣿⣿⣶⡄ ",
+        "⠉⠻⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣭⣭⣭⣴⣾⣿⣿⣿⣿⣿⣿⣿⣿⣿⣷⡀",
+        "   ⠉⠉⠛⠛⠉  ⢠⣾⣿⣿⣿⣿⣿⣿⣿⣿⡿⠿⣿⣿⣿⣿⣿⣿⣿⡿⣿⣿⡇",
+        "          ⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣦⣤⣶⠿       ⡿ ",
+        "         ⢀⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⡿⢻⣿⡟⠃⠿⠋      ",
+        "         ⠈⣿⣿⣿⣿⣿⣿⣿⡿⠿⠛⠋            "
+      ],
+      "colors": [
+        "        llllll        llllggg    ",
+        "       lrrlllllgg   glgllllggg   ",
+        "       rrlgggglrrllrrllggggggg   ",
+        "       llglrrrrrrrrrrrrrggggg    ",
+        "        grrrrrrrrrrrrrrrrllg     ",
+        "         lrrrrrrrrrrrrrrrl l     ",
+        "   lgggglrrrrrrrrddddrdrrrlgg    ",
+        " rlllrgglrrrrrrrddddrrddrlggggr  ",
+        "lrrrrrlgglrrrrrrrdrrddrrrgggggrl ",
+        "lllllrrrrlrrrrrrrrrrrdrrlgggggrgr",
+        "   grlrl  rrllrrrrrlrrrrrllgggrlr",
+        "          rlggggggllrrrd       r ",
+        "         glrrrrlllgllllggrr      ",
+        "         gglllllldrrr            "
+      ]
+    },
+    {
+      "columns": 24,
+      "anchor_columns": 22,
+      "rows": [
+        "     ⢠⣴⣶⣤⣦⣄⡀    ⣠⣤⣶⣾⣷   ",
+        "     ⣾⣿⣿⣿⣿⣿⣿⣤⡀⣴⣿⣿⣿⣿⣿⣿⠇  ",
+        "     ⢻⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⡇   ",
+        "      ⠙⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⠯    ",
+        "   ⡀⣤⣶⣶⣾⣿⣿⣿⣿⡿⣿⣟⠻⡟⣿⣿⣦⣄   ",
+        " ⣴⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣟⣋⣽⣷⠝⣸⣿⣿⣿⣦⣀ ",
+        "⠺⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣛⣓⣫⣼⣿⣿⣿⣿⣿⣿⡄",
+        "  ⠉⠙⠛⠋⠉⢉⣿⣿⣿⣿⣿⣿⣿⠿⢿⣿⣿⣿⣿⡿⣿⡇",
+        "       ⣺⣿⣿⣿⣿⣿⣿⣿⣷⣾⠿      ",
+        "       ⢿⣿⣿⣿⣿⣿⡿⠿⠛⠋       "
+      ],
+      "colors": [
+        "     grlrllg    lllgg   ",
+        "     rrlgggllgrlgllggg  ",
+        "     lglrrrrrrrrrlggg   ",
+        "      lrrrrrrrrrrrll    ",
+        "   gggrrrrrrdddrrrllg   ",
+        " rrrlglrrrrrdddddrrgggr ",
+        "lrrrlllrrrrrddrdrrggggrl",
+        "  glrrlgllrrrrldrrlgggrr",
+        "       llllggllrld      ",
+        "       grlrlldrrr       "
+      ]
+    }
+  ]
+}

@@ -11,11 +11,17 @@ dependencies = [
     "openai>=1.58,<4",
     "python-dotenv>=1.0,<2",
     "httpx>=0.27,<1",
+    "rich>=14.2,<16",
+    "textual>=8.2,<9",
     "tzdata>=2025.2; sys_platform == 'win32'",
 ]
 
 [project.scripts]
 agent-try = "agent_try.__main__:main"
+ds = "agent_try.__main__:main"
 
 [tool.setuptools.packages.find]
 include = ["agent_try*"]
+
+[tool.setuptools.package-data]
+agent_try = ["system_prompt.md", "assets/rabbit.json", "assets/rabbit-source.png", "assets/kapok.json", "assets/kapok-source.png"]

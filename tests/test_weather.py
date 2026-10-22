@@ -1,14 +1,17 @@
 # 测试天气工具的城市查找、当地日期判断和预报气温提取。
 
 import datetime as dt
+import json
 import unittest
 from unittest.mock import AsyncMock, patch
 from zoneinfo import ZoneInfo
 
 from agent_try.tools.weather import (
-    FORECAST_URL, GEOCODING_URL, WeatherLocationAmbiguous,
+    FORECAST_URL, GEOCODING_URL, WeatherDateInvalid, WeatherLocationAmbiguous,
+    WeatherLocationMismatch,
     WeatherLocationNotFound, WeatherUnavailable, get_weather,
 )
+from agent_try.tools.weather_contract import weather_data
 
 
 PLACE = {
@@ -20,6 +23,18 @@ PLACE = {
 
 
 class WeatherTests(unittest.IsolatedAsyncioTestCase):
+    @patch("agent_try.tools.weather._get_json", new_callable=AsyncMock)
+    async def test_bare_luoyang_prefers_henan_city_over_same_named_towns(self, get_json):
+        tomorrow = (dt.datetime.now(ZoneInfo("Asia/Shanghai")).date() + dt.timedelta(days=1)).isoformat()
+        get_json.side_effect = [
+            {"results": [{**PLACE, "name": "洛阳市", "admin1": "河南"}]},
+            {"daily": {"time": [tomorrow], "temperature_2m_max": [20],
+                       "temperature_2m_min": [10]}},
+        ]
+        result = await get_weather("洛阳", "tomorrow")
+        self.assertEqual(get_json.await_args_list[0].args[1]["name"], "洛阳市")
+        self.assertEqual(result["location"], "洛阳市, 河南, 中国")
+
     @patch("agent_try.tools.weather._get_json", new_callable=AsyncMock)
     async def test_city_suffix_is_removed_when_service_indexes_short_name(self, get_json):
         today = dt.datetime.now(ZoneInfo("Asia/Shanghai")).date().isoformat()
@@ -41,6 +56,25 @@ class WeatherTests(unittest.IsolatedAsyncioTestCase):
         with self.assertRaisesRegex(WeatherLocationNotFound, "City not found"):
             await get_weather("乌鲁木齐市", "today")
         self.assertEqual(get_json.await_count, 2)
+
+    @patch("agent_try.tools.weather._get_json", new_callable=AsyncMock)
+    async def test_geocoder_must_return_requested_chinese_city(self, get_json):
+        get_json.return_value = {"results": [{**PLACE, "name": "洛阳市", "admin1": "河南"}]}
+        with self.assertRaises(WeatherLocationMismatch):
+            await get_weather("北京", "today")
+        get_json.assert_awaited_once()
+
+    @patch("agent_try.tools.weather._get_json", new_callable=AsyncMock)
+    async def test_exact_chinese_city_can_follow_wrong_geocoder_candidate(self, get_json):
+        tomorrow = (dt.datetime.now(ZoneInfo("Asia/Shanghai")).date()
+                    + dt.timedelta(days=1)).isoformat()
+        get_json.side_effect = [
+            {"results": [{**PLACE, "name": "洛阳市", "admin1": "河南"}, PLACE]},
+            {"daily": {"time": [tomorrow], "temperature_2m_max": [20],
+                       "temperature_2m_min": [10]}},
+        ]
+        result = await get_weather("北京", "tomorrow")
+        self.assertEqual(result["location"], "北京, 北京, 中国")
 
     @patch("agent_try.tools.weather._get_json", new_callable=AsyncMock)
     async def test_tool_does_not_invent_a_shorter_region_name(self, get_json):
@@ -68,8 +102,11 @@ class WeatherTests(unittest.IsolatedAsyncioTestCase):
         get_json.side_effect = [
             {"results": [PLACE]},
             {
-                "daily": {"time": [today], "temperature_2m_max": [21.4], "temperature_2m_min": [9.2]},
-                "current": {"time": f"{today}T14:15", "temperature_2m": 18.3},
+                "daily": {"time": [today], "temperature_2m_max": [21.4], "temperature_2m_min": [9.2],
+                          "weather_code": [61], "precipitation_sum": [2.3],
+                          "precipitation_probability_max": [70], "wind_speed_10m_max": [18.0]},
+                "current": {"time": f"{today}T14:15", "temperature_2m": 18.3,
+                            "weather_code": 3, "wind_speed_10m": 8.5},
             },
         ]
         result = await get_weather("北京", "today")
@@ -79,27 +116,40 @@ class WeatherTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(result["temperature_min_c"], 9.2)
         self.assertEqual(result["temperature_current_c"], 18.3)
         self.assertEqual(result["current_time"], f"{today}T14:15")
+        self.assertEqual(result["daily_most_severe_condition"], "Slight rain")
+        self.assertEqual(result["current_condition"], "Overcast")
+        self.assertEqual(result["precipitation_sum_mm"], 2.3)
+        self.assertEqual(result["precipitation_probability_max_pct"], 70)
+        self.assertEqual(result["wind_speed_max_kmh"], 18.0)
+        self.assertEqual(result["wind_speed_current_kmh"], 8.5)
+        visible = json.loads(weather_data(result))
+        self.assertEqual(visible["daily_most_severe_condition"], "Slight rain")
+        self.assertEqual(visible["wind_speed_max_kmh"], 18.0)
+        self.assertNotIn("source", visible)
         self.assertEqual(get_json.await_args_list[0].args[0], GEOCODING_URL)
         self.assertEqual(get_json.await_args_list[1].args[0], FORECAST_URL)
         self.assertEqual(get_json.await_args_list[1].args[1]["timezone"], "Asia/Shanghai")
-        self.assertEqual(get_json.await_args_list[1].args[1]["current"], "temperature_2m")
+        self.assertEqual(get_json.await_args_list[1].args[1]["current"], "temperature_2m,weather_code,wind_speed_10m")
 
     @patch("agent_try.tools.weather._get_json", new_callable=AsyncMock)
     async def test_future_date_has_no_current_temperature(self, get_json):
         tomorrow = (dt.datetime.now(ZoneInfo("Asia/Shanghai")).date() + dt.timedelta(days=1)).isoformat()
         get_json.side_effect = [
             {"results": [PLACE]},
-            {"daily": {"time": [tomorrow], "temperature_2m_max": [22], "temperature_2m_min": [10]}},
+            {"daily": {"time": [tomorrow], "temperature_2m_max": [22], "temperature_2m_min": [10],
+                       "weather_code": [2], "wind_speed_10m_max": [12]}},
         ]
         result = await get_weather("北京", "tomorrow")
         self.assertNotIn("temperature_current_c", result)
+        self.assertEqual(result["daily_most_severe_condition"], "Partly cloudy")
+        self.assertEqual(result["wind_speed_max_kmh"], 12.0)
         self.assertNotIn("current", get_json.await_args_list[1].args[1])
 
     @patch("agent_try.tools.weather._get_json", new_callable=AsyncMock)
     async def test_date_outside_window_stops_before_forecast(self, get_json):
         get_json.return_value = {"results": [PLACE]}
         future = (dt.datetime.now(ZoneInfo("Asia/Shanghai")).date() + dt.timedelta(days=8)).isoformat()
-        with self.assertRaisesRegex(WeatherUnavailable, "next 7"):
+        with self.assertRaisesRegex(WeatherDateInvalid, "next 7"):
             await get_weather("北京", future)
         get_json.assert_awaited_once()
 

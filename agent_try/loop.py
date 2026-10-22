@@ -1,4 +1,4 @@
-# 通用任务循环：在限定次数内推进思考、工具执行、结果观察与回答验收。
+# 通用任务循环：在限定次数内推进模型决策、工具执行与结果观察。
 
 from dataclasses import dataclass
 from typing import Awaitable, Callable
@@ -18,47 +18,27 @@ class Observation:
     result: dict[str, object]
 
 
-@dataclass(frozen=True)
-class Verdict:
-    status: str  # completed, needs_input, or retry
-    feedback: str = ""
-    answer: str = ""
-    retry_tool: bool = False
-
-
 async def run_loop(
-    think: Callable[[list[Observation], Verdict | None], Awaitable[str | ToolAction]],
-    act: Callable[[ToolAction], Awaitable[Observation | Verdict]],
-    verify: Callable[[str, list[Observation]], Verdict],
+    think: Callable[[list[Observation]], Awaitable[str | ToolAction | list[ToolAction]]],
+    act: Callable[[ToolAction], Awaitable[Observation]],
     *,
     max_steps: int = 4,
 ) -> str:
-    """Advance until a verified answer, a clarification, or a bounded failure."""
+    """Advance until the model answers, asks for input, or reaches the step limit."""
     observations: list[Observation] = []
-    feedback: Verdict | None = None
     used_calls: set[tuple[str, tuple[tuple[str, str], ...]]] = set()
     for _ in range(max_steps):
-        decision = await think(observations, feedback)
-        feedback = None
+        decision = await think(observations)
         if isinstance(decision, str):
-            verdict = verify(decision, observations)
-            if verdict.status in {"completed", "needs_input"}:
-                return verdict.answer or decision
-            if verdict.status != "retry" or not verdict.feedback:
-                raise ValueError("Agent returned an invalid completion verdict.")
-            feedback = verdict
-            continue
-        key = (decision.name, tuple(sorted(decision.arguments.items())))
-        if key in used_calls:
-            raise ValueError("DeepSeek repeated the same tool call.")
-        outcome = await act(decision)
-        if isinstance(outcome, Verdict):
-            if outcome.status == "needs_input" and outcome.answer:
-                return outcome.answer
-            if outcome.status == "retry" and outcome.feedback:
-                feedback = outcome
-                continue
-            raise ValueError("Agent returned an invalid tool verdict.")
-        used_calls.add(key)
-        observations.append(outcome)
+            return decision
+        actions = decision if isinstance(decision, list) else [decision]
+        if not actions or len(actions) > 8:
+            raise ValueError("模型一次请求的工具调用数量无效。")
+        for action in actions:
+            key = (action.name, tuple(sorted(action.arguments.items())))
+            if key in used_calls:
+                raise ValueError("DeepSeek repeated the same tool call.")
+            outcome = await act(action)
+            used_calls.add(key)
+            observations.append(outcome)
     raise ValueError("DeepSeek did not complete the task within the loop limit.")

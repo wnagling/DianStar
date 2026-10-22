@@ -1,87 +1,84 @@
-# 编排一轮提问：调用模型与工具，验收回答，并更新成功的对话历史。
+# 编排一轮提问：调用模型与工具，并更新成功的对话历史。
 
+import json
 from pathlib import Path
+from typing import Callable
 
+from .config import load_model_settings
 from .deepseek import ENV_FILE, DeepSeekSession, create_client, usable_history
-from .loop import Observation, ToolAction, Verdict, run_loop
+from .loop import Observation, ToolAction, run_loop
+from .prompts import ASSISTANT_INSTRUCTIONS
 from .tools.weather import (
-    WEATHER_TOOL, WeatherLocationAmbiguous, WeatherLocationNotFound,
+    WEATHER_TOOL, WeatherDateInvalid, WeatherLocationAmbiguous, WeatherLocationMismatch,
+    WeatherLocationNotFound,
     WeatherUnavailable, get_weather,
 )
-from .tools.weather_contract import (
-    WEATHER_REPLY_INSTRUCTIONS, location_clarification, same_weather_city,
-    verify_weather, weather_data, weather_date_unspecified, weather_goal,
-)
+from .tools.weather_contract import weather_data
 
 
 async def ask_deepseek(
     question: str,
     *,
-    history: list[dict[str, str]] | None = None,
+    history: list[dict[str, object]] | None = None,
     env_file: Path = ENV_FILE,
+    on_stream: Callable[[str], None] | None = None,
+    on_thinking: Callable[[str], None] | None = None,
 ) -> str:
-    """Run one bounded agent task, exposing only verified text to the caller."""
+    """Run one bounded agent task and return the model's final text."""
     if not question.strip():
         raise ValueError("Please provide a question.")
 
     cleaned_history = usable_history(history)
-    must_check_weather = weather_goal(question, cleaned_history)
-    date_unspecified = must_check_weather and weather_date_unspecified(question, cleaned_history)
-    client = create_client(env_file)
-    session = DeepSeekSession(
-        client, question, cleaned_history, WEATHER_REPLY_INSTRUCTIONS, [WEATHER_TOOL],
-    )
-    first_failed_location: str | None = None
-    not_found_count = 0
+    settings = load_model_settings(env_file.parent / ".local" / "config.json")
+    if not settings.default_model:
+        raise ValueError("当前默认 Key 尚未添加模型，请在 /config 的 model 中先添加模型。")
+    client = create_client(env_file, key_id=settings.default_key_id)
+    def observe_error(action: ToolAction, code: str) -> Observation:
+        result = {"error": code, "requested_location": action.arguments["location"],
+                  "requested_date": action.arguments["date"]}
+        session.observe(action, json.dumps(result, ensure_ascii=False))
+        return Observation(action, result)
 
-    async def act(action: ToolAction) -> Observation | Verdict:
-        nonlocal first_failed_location, not_found_count
-        if action.name != "get_weather":
-            raise ValueError("DeepSeek returned an unsupported tool call.")
-        if first_failed_location and not same_weather_city(
-            first_failed_location, action.arguments["location"]
-        ):
-            return Verdict("needs_input", answer=location_clarification(
-                first_failed_location, question, ambiguous=False,
-            ))
+    async def act_weather(action: ToolAction) -> Observation:
         try:
             result = await get_weather(action.arguments["location"], action.arguments["date"])
         except WeatherLocationAmbiguous:
-            return Verdict("needs_input", answer=location_clarification(
-                action.arguments["location"], question, ambiguous=True,
-            ))
+            return observe_error(action, "location_ambiguous")
+        except WeatherDateInvalid:
+            return observe_error(action, "invalid_date")
+        except WeatherLocationMismatch:
+            return observe_error(action, "location_mismatch")
         except WeatherLocationNotFound:
-            not_found_count += 1
-            first_failed_location = first_failed_location or action.arguments["location"]
-            if not_found_count >= 2:
-                return Verdict("needs_input", answer=location_clarification(
-                    first_failed_location, question, ambiguous=False,
-                ))
-            session.observe(action, '{"error":"location_not_found"}')
-            return Verdict(
-                "retry",
-                "地名查询无结果。请结合用户原话识别城市、行政区和国家，"
-                "只调整同一城市的地名写法后重新调用 get_weather 一次。"
-                "可以使用行政区简称；不要更换城市或猜测其他城市。",
-                retry_tool=True,
-            )
-        except WeatherUnavailable as error:
-            raise ValueError(f"Weather lookup failed: {error}") from error
+            return observe_error(action, "location_not_found")
+        except WeatherUnavailable:
+            return observe_error(action, "weather_unavailable")
         session.observe(action, weather_data(result))
         return Observation(action, result)
 
-    def verify(answer: str, observations: list[Observation]) -> Verdict:
-        if must_check_weather or observations:
-            return verify_weather(
-                answer, observations, question=question, date_unspecified=date_unspecified,
-            )
-        return Verdict("completed", answer=answer)
+    # 同一份注册表绑定模型可见的工具定义和实际执行函数。
+    tool_registry = {WEATHER_TOOL["function"]["name"]: (WEATHER_TOOL, act_weather)}
+    session = DeepSeekSession(
+        client, question, cleaned_history, ASSISTANT_INSTRUCTIONS,
+        [schema for schema, _ in tool_registry.values()],
+        on_stream=on_stream,
+        on_thinking=on_thinking,
+        model=settings.default_model,
+    )
+
+    async def act(action: ToolAction) -> Observation:
+        registration = tool_registry.get(action.name)
+        if registration is None:
+            raise ValueError("模型返回了无法执行的工具调用。")
+        _, handler = registration
+        return await handler(action)
 
     async with client:
-        answer = await run_loop(session.think, act, verify, max_steps=6)
+        answer = await run_loop(session.think, act, max_steps=6)
     if history is not None:
-        history.extend((
-            {"role": "user", "content": question},
-            {"role": "assistant", "content": answer},
-        ))
+        turn_messages = session.messages[len(cleaned_history) + 1:]
+        if (not turn_messages or turn_messages[-1].get("role") != "assistant"
+                or turn_messages[-1].get("content") != answer):
+            turn_messages = [{"role": "user", "content": question},
+                             {"role": "assistant", "content": answer}]
+        history.extend(turn_messages)
     return answer
