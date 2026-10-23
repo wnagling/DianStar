@@ -11,12 +11,12 @@ from dotenv import dotenv_values
 from textual.widgets import Button, Input, ListView, Select, Static
 from rich.cells import cell_len
 
-from agent_try.config import (create_key_profile, delete_key_profile, load_model_settings, save_api_key,
+from dianstar.config import (create_key_profile, delete_key_profile, load_model_settings, save_api_key,
                               save_model_settings, set_default_key, validate_shortcut)
-from agent_try.agent import ask_deepseek
-from agent_try.config_ui import ConfigScreen
-from agent_try.conversations import Conversation
-from agent_try.tui import DianStarApp
+from dianstar.agent import ask_deepseek
+from dianstar.config_ui import ConfigScreen
+from dianstar.conversations import Conversation
+from dianstar.tui import DianStarApp
 
 
 class ConfigTests(unittest.TestCase):
@@ -273,7 +273,7 @@ class ConfigTuiTests(unittest.IsolatedAsyncioTestCase):
                 self.assertEqual(load_model_settings(config_file).default_key_id, "primary")
                 self.assertIsNone(dotenv_values(env_file).get("DEEPSEEK_API_KEY_KEY2"))
 
-    @patch("agent_try.deepseek.AsyncOpenAI")
+    @patch("dianstar.deepseek.AsyncOpenAI")
     async def test_request_uses_default_keys_own_model(self, client_class):
         with tempfile.TemporaryDirectory() as temporary:
             root = Path(temporary)
@@ -372,7 +372,7 @@ class ConfigTuiTests(unittest.IsolatedAsyncioTestCase):
                 self.assertNotIsInstance(app.screen, ConfigScreen)
                 self.assertFalse(config_file.exists())
 
-    @patch("agent_try.deepseek.AsyncOpenAI")
+    @patch("dianstar.deepseek.AsyncOpenAI")
     async def test_selected_model_reaches_sdk_request(self, client_class):
         with tempfile.TemporaryDirectory() as temporary:
             root = Path(temporary)

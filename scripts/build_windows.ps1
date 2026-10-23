@@ -24,7 +24,7 @@ try {
 
     & $venvPython -m PyInstaller `
         --noconfirm --clean --onedir --console --name DianStar `
-        --collect-data agent_try `
+        --collect-data dianstar `
         --distpath $distRoot `
         --workpath (Join-Path $runRoot 'work') `
         --specpath (Join-Path $runRoot 'spec') `

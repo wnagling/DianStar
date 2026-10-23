@@ -7,7 +7,7 @@ from PIL import Image, ImageOps
 
 
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
-OUTPUT = PROJECT_ROOT / "agent_try" / "assets" / "rabbit.json"
+OUTPUT = PROJECT_ROOT / "dianstar" / "assets" / "rabbit.json"
 ART_SIZES = ((28, 18), (20, 12), (12, 7))
 DOT_BITS = ((0x01, 0x02, 0x04, 0x40), (0x08, 0x10, 0x20, 0x80))
 BAYER = ((0, 8, 2, 10), (12, 4, 14, 6), (3, 11, 1, 9), (15, 7, 13, 5))

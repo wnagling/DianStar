@@ -2,10 +2,10 @@
   "version": "0.2.0",
   "configurations": [
     {
-      "name": "agentTry：连续对话",
+      "name": "DianStar：连续对话",
       "type": "debugpy",
       "request": "launch",
-      "module": "agent_try",
+      "module": "dianstar",
       "cwd": "${workspaceFolder}",
       "console": "integratedTerminal",
       "env": {
@@ -13,10 +13,10 @@
       }
     },
     {
-      "name": "agentTry：恢复会话",
+      "name": "DianStar：恢复会话",
       "type": "debugpy",
       "request": "launch",
-      "module": "agent_try",
+      "module": "dianstar",
       "cwd": "${workspaceFolder}",
       "args": ["--resume", "${input:conversationId}"],
       "console": "integratedTerminal",
@@ -25,10 +25,10 @@
       }
     },
     {
-      "name": "agentTry：提问 DeepSeek",
+      "name": "DianStar：提问 DeepSeek",
       "type": "debugpy",
       "request": "launch",
-      "module": "agent_try",
+      "module": "dianstar",
       "cwd": "${workspaceFolder}",
       "args": ["${input:question}"],
       "console": "integratedTerminal",

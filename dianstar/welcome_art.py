@@ -15,7 +15,7 @@ _MOAT = 1
 
 @lru_cache(maxsize=1)
 def _variants() -> list[dict[str, object]]:
-    data = json.loads(files("agent_try").joinpath("assets", "kapok.json").read_text(encoding="utf-8"))
+    data = json.loads(files("dianstar").joinpath("assets", "kapok.json").read_text(encoding="utf-8"))
     return data["variants"]
 
 

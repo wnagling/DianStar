@@ -1,8 +1,10 @@
-# agentTry
+# DianStar
 
-agentTry 是一个用 Python 编写的本地命令行 Agent 学习项目。现在可以通过 OpenAI 兼容 SDK 调用 DeepSeek、进行单次问答或可恢复的终端对话，并使用天气工具查询城市气温。程序模块的关系见 [当前架构](./docs/架构.md)，长期方向见 [产品文档](./docs/产品文档.md)。
+项目原名 AgentTry，现统一为 DianStar；Python 包名和完整启动命令为 `dianstar`，快捷命令为 `DS`。需要 Python 3.11 或更新版本。改名与升级说明见 [2026-10-23 开发记录](./docs/开发日志/2026-10-23.md)。
 
-运行时默认提示词在 `agent_try/system_prompt.md`，程序启动时由 `prompts.py` 读取并发送给 DeepSeek。修改后重新启动程序即可生效。`AGENTS.md` 是 Codex 等开发助手可选的仓库说明文件，Python 应用不会自动加载它；本项目没有将其作为运行时提示词。
+DianStar 是一个用 Python 编写的本地命令行 Agent 学习项目。现在可以通过 OpenAI 兼容 SDK 调用 DeepSeek、进行单次问答或可恢复的终端对话，并使用天气工具查询城市气温。程序模块的关系见 [当前架构](./docs/架构.md)，长期方向见 [产品文档](./docs/产品文档.md)。
+
+运行时默认提示词在 `dianstar/system_prompt.md`，程序启动时由 `prompts.py` 读取并发送给 DeepSeek。修改后重新启动程序即可生效。`AGENTS.md` 是 Codex 等开发助手可选的仓库说明文件，Python 应用不会自动加载它；本项目没有将其作为运行时提示词。
 
 ## 当前功能
 
@@ -16,7 +18,7 @@ agentTry 是一个用 Python 编写的本地命令行 Agent 学习项目。现�
 
 ## 安装
 
-需要 Python 3.10 或更新版本、可用的 DeepSeek API Key，以及访问 DeepSeek 和 Open-Meteo 的网络。在项目根目录打开 PowerShell：
+需要 Python 3.11 或更新版本、可用的 DeepSeek API Key，以及访问 DeepSeek 和 Open-Meteo 的网络。在项目根目录打开 PowerShell：
 
 ```powershell
 python -m venv .venv
@@ -46,20 +48,20 @@ powershell.exe -NoProfile -ExecutionPolicy Bypass -File .\scripts\build_windows.
 
 ```powershell
 # 进入终端界面连续对话
-.\.venv\Scripts\python.exe -m agent_try
+.\.venv\Scripts\python.exe -m dianstar
 
 # 使用原有的纯文本交互界面
-.\.venv\Scripts\python.exe -m agent_try --plain
+.\.venv\Scripts\python.exe -m dianstar --plain
 
 # 单次提问，不保存会话
-.\.venv\Scripts\python.exe -m agent_try "潮州今天天气多少度？"
+.\.venv\Scripts\python.exe -m dianstar "潮州今天天气多少度？"
 
 # 按会话 ID 查看和恢复
-.\.venv\Scripts\python.exe -m agent_try --list
-.\.venv\Scripts\python.exe -m agent_try --resume 会话ID
+.\.venv\Scripts\python.exe -m dianstar --list
+.\.venv\Scripts\python.exe -m dianstar --resume 会话ID
 
 # 查看命令帮助
-.\.venv\Scripts\python.exe -m agent_try --help
+.\.venv\Scripts\python.exe -m dianstar --help
 ```
 
 安装项目后，也可以在任意终端输入 `DS` 启动 DianStar TUI。Windows 命令名不区分大小写；该命令需要安装项目所用 Python 的 `Scripts` 目录位于 PATH。若使用项目 `.venv`，请先激活虚拟环境再输入 `DS`。
@@ -83,11 +85,11 @@ powershell.exe -NoProfile -ExecutionPolicy Bypass -File .\scripts\build_windows.
 
 每轮成功问答后才写入会话文件。会话文件位于项目根目录的 `.local/conversations/`，每个 ID 对应一个 JSON 文件；其中保存会话名、可见问答，以及供模型继续对话的工具调用、工具结果和 `reasoning_content`。`/switch` 按文件最近修改时间排序。文件是本机明文，`.local/` 已被 Git 忽略。旧格式会话可继续恢复。长对话会重复发送当前上下文，增加请求内容和费用。
 
-在 VS Code 中打开整个 `agentTry` 文件夹，选中已安装项目依赖的 Python 解释器，再从“运行和调试”使用 `.vscode/launch.json` 提供的“连续对话”“恢复会话”或“提问 DeepSeek”配置。程序应以模块 `agent_try` 启动；直接把 `agent_try/__main__.py` 当独立脚本运行会导致相对导入错误。如果 PowerShell 中文显示乱码，可先运行 `$env:PYTHONIOENCODING='utf-8'`。
+在 VS Code 中打开整个 `DianStar` 文件夹，选中已安装项目依赖的 Python 解释器，再从“运行和调试”使用 `.vscode/launch.json` 提供的“连续对话”“恢复会话”或“提问 DeepSeek”配置。程序应以模块 `dianstar` 启动；直接把 `dianstar/__main__.py` 当独立脚本运行会导致相对导入错误。如果 PowerShell 中文显示乱码，可先运行 `$env:PYTHONIOENCODING='utf-8'`。
 
 ## 天气工具怎样工作
 
-`agent_try/agent.py` 编排本轮任务；`agent_try/deepseek.py` 把工具名称及参数说明发给 DeepSeek。模型请求 `get_weather(location, date)` 后，`agent_try/tools/weather.py` 用 [Open-Meteo Geocoding API](https://open-meteo.com/en/docs/geocoding-api) 查城市，再用[天气预报 API](https://open-meteo.com/en/docs) 查天气数据。程序把工具结果连同模型上一条工具调用消息及其推理内容交回模型，`agent_try/loop.py` 继续循环，由模型组织最终回答。
+`dianstar/agent.py` 编排本轮任务；`dianstar/deepseek.py` 把工具名称及参数说明发给 DeepSeek。模型请求 `get_weather(location, date)` 后，`dianstar/tools/weather.py` 用 [Open-Meteo Geocoding API](https://open-meteo.com/en/docs/geocoding-api) 查城市，再用[天气预报 API](https://open-meteo.com/en/docs) 查天气数据。程序把工具结果连同模型上一条工具调用消息及其推理内容交回模型，`dianstar/loop.py` 继续循环，由模型组织最终回答。
 
 `date` 可为 `today`、`tomorrow` 或未来 7 天内的 `YYYY-MM-DD`。查询以目的地当地日期为准。天气工具统一逗号格式，并尝试中文城市名有无“市”字；未提供地区的中文城市名会先尝试带“市”的写法，避免优先匹配到同名乡镇。它不保存自治区简称表。工具会检查查询到的中文城市名是否与请求的城市名一致；跨语言名称尚不能完全独立核对，仍依赖地名服务的解析结果。查不到地点、地点有歧义、日期无效或服务暂不可用时，工具只返回错误代码和原请求参数，不提供天气数据。模型可结合用户问题及历史决定下一步，但循环次数和重复调用仍受程序限制。每日天气现象代表该日最强的预报天气现象，不代表全天每小时的状况。最高、最低气温为预报，当前气温也来自天气模型，并非温度计实测值。工具交给模型的数据不包含来源字段，来源在本节记录。查询需要联网；使用 Open-Meteo 免费接口前请查看其[使用条件](https://open-meteo.com/en/terms)。
 
@@ -100,28 +102,28 @@ powershell.exe -NoProfile -ExecutionPolicy Bypass -File .\scripts\build_windows.
 | 文件 | 作用 |
 | --- | --- |
 | `README.md` | 项目功能、安装、运行和文件导航 |
-| `pyproject.toml` | Python 包元数据、依赖及 `agent-try` 命令入口 |
+| `pyproject.toml` | Python 包元数据、依赖及 `dianstar` 命令入口 |
 | `.gitignore` | 排除密钥、会话、虚拟环境和缓存 |
 | `.env.example` | API Key 配置格式示例，不含真实密钥 |
 | `.vscode/launch.json` | VS Code 的模块运行与调试配置 |
-| `agent_try/__init__.py` | Python 包入口 |
-| `agent_try/__main__.py` | 命令行参数、单次问答、纯文本模式和 TUI 入口 |
-| `agent_try/tui.py` | Textual 终端界面、历史显示、键盘操作及会话命令 |
-| `agent_try/config_ui.py` | `/config` 的键盘菜单、Key 管理及各项配置详情页 |
-| `agent_try/config.py` | 多 Key 配置、各 Key 模型列表、默认选择和快捷键持久化；密钥的本地更新 |
-| `agent_try/rabbit_art.py`、`agent_try/assets/rabbit.json`、`agent_try/assets/rabbit-source.png` | 绘制随包保存的终端兔子字符画；PNG 是重新生成字符数据的素材，运行时只读取 JSON |
-| `agent_try/welcome_art.py`、`agent_try/assets/kapok.json`、`agent_try/assets/kapok-source.png` | 从参考图生成木棉花点阵，绘制在兔子后层并保护兔子轮廓 |
+| `dianstar/__init__.py` | Python 包入口 |
+| `dianstar/__main__.py` | 命令行参数、单次问答、纯文本模式和 TUI 入口 |
+| `dianstar/tui.py` | Textual 终端界面、历史显示、键盘操作及会话命令 |
+| `dianstar/config_ui.py` | `/config` 的键盘菜单、Key 管理及各项配置详情页 |
+| `dianstar/config.py` | 多 Key 配置、各 Key 模型列表、默认选择和快捷键持久化；密钥的本地更新 |
+| `dianstar/rabbit_art.py`、`dianstar/assets/rabbit.json`、`dianstar/assets/rabbit-source.png` | 绘制随包保存的终端兔子字符画；PNG 是重新生成字符数据的素材，运行时只读取 JSON |
+| `dianstar/welcome_art.py`、`dianstar/assets/kapok.json`、`dianstar/assets/kapok-source.png` | 从参考图生成木棉花点阵，绘制在兔子后层并保护兔子轮廓 |
 | `scripts/build_flower_art.py` | 从原有裁剪范围生成花朵基础点阵，并用手绘点阵补足右下花瓣；仅更新素材时使用，需 Pillow |
 | `start_dianstar.cmd`、`start_dianstar.ps1` | 在独立 PowerShell 窗口启动应用并保留错误信息 |
-| `agent_try/conversations.py` | 会话名称和 ID、JSON 持久化、恢复及上下文起点 |
-| `agent_try/agent.py` | 一轮任务的编排、工具分派与回答保存 |
-| `agent_try/prompts.py` | 加载运行时系统提示词 |
-| `agent_try/system_prompt.md` | 可编辑的通用助手默认提示词 |
-| `agent_try/deepseek.py` | DeepSeek SDK 请求、消息转换与异常工具标记解析 |
-| `agent_try/loop.py` | 有次数上限的 Think → Act → Observe 循环 |
-| `agent_try/tools/__init__.py` | 工具包入口 |
-| `agent_try/tools/weather.py` | 天气工具定义、城市解析、日期校验和 Open-Meteo 查询 |
-| `agent_try/tools/weather_contract.py` | 裁剪发送给模型的天气数据 |
+| `dianstar/conversations.py` | 会话名称和 ID、JSON 持久化、恢复及上下文起点 |
+| `dianstar/agent.py` | 一轮任务的编排、工具分派与回答保存 |
+| `dianstar/prompts.py` | 加载运行时系统提示词 |
+| `dianstar/system_prompt.md` | 可编辑的通用助手默认提示词 |
+| `dianstar/deepseek.py` | DeepSeek SDK 请求、消息转换与异常工具标记解析 |
+| `dianstar/loop.py` | 有次数上限的 Think → Act → Observe 循环 |
+| `dianstar/tools/__init__.py` | 工具包入口 |
+| `dianstar/tools/weather.py` | 天气工具定义、城市解析、日期校验和 Open-Meteo 查询 |
+| `dianstar/tools/weather_contract.py` | 裁剪发送给模型的天气数据 |
 | `tests/test_deepseek.py` | 问答、会话和模型工具调用的离线测试 |
 | `tests/test_cli.py` | 终端 Markdown 回答展示测试 |
 | `tests/test_tui.py` | 终端界面的补全、切换会话和问答保存测试 |

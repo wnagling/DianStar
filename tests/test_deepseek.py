@@ -12,13 +12,13 @@ from unittest.mock import AsyncMock, patch
 from httpx import Request
 from openai import APIConnectionError
 
-from agent_try.__main__ import main
-from agent_try.conversations import Conversation, list_conversations
-from agent_try.agent import ask_deepseek
-from agent_try.deepseek import DeepSeekSession, _parse_unparsed_tool_calls
-from agent_try.loop import Observation, ToolAction
-from agent_try.prompts import ASSISTANT_INSTRUCTIONS
-from agent_try.tools.weather import WEATHER_TOOL
+from dianstar.__main__ import main
+from dianstar.conversations import Conversation, list_conversations
+from dianstar.agent import ask_deepseek
+from dianstar.deepseek import DeepSeekSession, _parse_unparsed_tool_calls
+from dianstar.loop import Observation, ToolAction
+from dianstar.prompts import ASSISTANT_INSTRUCTIONS
+from dianstar.tools.weather import WEATHER_TOOL
 
 
 class FakeStream:
@@ -40,8 +40,8 @@ class FakeStream:
 
 
 class DeepSeekTests(unittest.IsolatedAsyncioTestCase):
-    @patch("agent_try.agent.get_weather", new_callable=AsyncMock)
-    @patch("agent_try.deepseek.AsyncOpenAI")
+    @patch("dianstar.agent.get_weather", new_callable=AsyncMock)
+    @patch("dianstar.deepseek.AsyncOpenAI")
     async def test_streaming_keeps_tool_calls_and_reasoning_out_of_visible_answer(self, client_class, weather):
         def chunk(*, content=None, reasoning=None, calls=None, finish=None):
             return SimpleNamespace(choices=[SimpleNamespace(
@@ -101,10 +101,10 @@ class DeepSeekTests(unittest.IsolatedAsyncioTestCase):
         actions = _parse_unparsed_tool_calls(raw, [tool])
         self.assertEqual([action.arguments for action in actions], [{"item": "A"}, {"item": "B"}])
 
-    @patch("agent_try.agent.get_weather", new_callable=AsyncMock)
-    @patch("agent_try.deepseek.AsyncOpenAI")
+    @patch("dianstar.agent.get_weather", new_callable=AsyncMock)
+    @patch("dianstar.deepseek.AsyncOpenAI")
     async def test_ambiguous_city_returns_control_to_model_with_history(self, client_class, weather):
-        from agent_try.tools.weather import WeatherLocationAmbiguous
+        from dianstar.tools.weather import WeatherLocationAmbiguous
 
         weather.side_effect = WeatherLocationAmbiguous("City name is ambiguous.")
         call = SimpleNamespace(id="call_1", function=SimpleNamespace(
@@ -137,10 +137,10 @@ class DeepSeekTests(unittest.IsolatedAsyncioTestCase):
         self.assertIn("西安有哪些景点", str(retry["messages"]))
         self.assertIn("location_ambiguous", str(retry["messages"]))
 
-    @patch("agent_try.agent.get_weather", new_callable=AsyncMock)
-    @patch("agent_try.deepseek.AsyncOpenAI")
+    @patch("dianstar.agent.get_weather", new_callable=AsyncMock)
+    @patch("dianstar.deepseek.AsyncOpenAI")
     async def test_invalid_tool_date_lets_model_answer_location_question(self, client_class, weather):
-        from agent_try.tools.weather import WeatherDateInvalid
+        from dianstar.tools.weather import WeatherDateInvalid
 
         weather.side_effect = WeatherDateInvalid("Date must be today or within the next 7 local days.")
         call = SimpleNamespace(id="call_1", function=SimpleNamespace(
@@ -171,10 +171,10 @@ class DeepSeekTests(unittest.IsolatedAsyncioTestCase):
         self.assertIn("invalid_date", str(retry["messages"]))
         self.assertEqual(retry["tool_choice"], "auto")
 
-    @patch("agent_try.agent.get_weather", new_callable=AsyncMock)
-    @patch("agent_try.deepseek.AsyncOpenAI")
+    @patch("dianstar.agent.get_weather", new_callable=AsyncMock)
+    @patch("dianstar.deepseek.AsyncOpenAI")
     async def test_invalid_tool_date_can_be_retried_as_tomorrow(self, client_class, weather):
-        from agent_try.tools.weather import WeatherDateInvalid
+        from dianstar.tools.weather import WeatherDateInvalid
 
         weather.side_effect = [
             WeatherDateInvalid("Date must be today or within the next 7 local days."),
@@ -210,10 +210,10 @@ class DeepSeekTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(weather.await_args_list[1].args[1], "tomorrow")
         self.assertEqual(client.chat.completions.create.await_count, 3)
 
-    @patch("agent_try.agent.get_weather", new_callable=AsyncMock)
-    @patch("agent_try.deepseek.AsyncOpenAI")
+    @patch("dianstar.agent.get_weather", new_callable=AsyncMock)
+    @patch("dianstar.deepseek.AsyncOpenAI")
     async def test_unknown_city_asks_to_check_spelling(self, client_class, weather):
-        from agent_try.tools.weather import WeatherLocationNotFound
+        from dianstar.tools.weather import WeatherLocationNotFound
 
         weather.side_effect = WeatherLocationNotFound("City not found.")
         call = SimpleNamespace(id="call_1", function=SimpleNamespace(
@@ -239,10 +239,10 @@ class DeepSeekTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(weather.await_count, 1)
         self.assertEqual(client.chat.completions.create.await_args.kwargs["tool_choice"], "auto")
 
-    @patch("agent_try.agent.get_weather", new_callable=AsyncMock)
-    @patch("agent_try.deepseek.AsyncOpenAI")
+    @patch("dianstar.agent.get_weather", new_callable=AsyncMock)
+    @patch("dianstar.deepseek.AsyncOpenAI")
     async def test_chinese_city_can_retry_in_pinyin_after_geocoding_failure(self, client_class, weather):
-        from agent_try.tools.weather import WeatherLocationNotFound
+        from dianstar.tools.weather import WeatherLocationNotFound
 
         weather.side_effect = [
             WeatherLocationNotFound("City not found."),
@@ -283,10 +283,10 @@ class DeepSeekTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(weather.await_count, 2)
         self.assertEqual(weather.await_args_list[1].args[0], "Hami, Xinjiang")
 
-    @patch("agent_try.agent.get_weather", new_callable=AsyncMock)
-    @patch("agent_try.deepseek.AsyncOpenAI")
+    @patch("dianstar.agent.get_weather", new_callable=AsyncMock)
+    @patch("dianstar.deepseek.AsyncOpenAI")
     async def test_region_name_can_be_clarified_without_fabricating_weather(self, client_class, weather):
-        from agent_try.tools.weather import WeatherLocationNotFound
+        from dianstar.tools.weather import WeatherLocationNotFound
 
         weather.side_effect = WeatherLocationNotFound("City not found.")
         call = SimpleNamespace(id="call_1", function=SimpleNamespace(
@@ -311,8 +311,8 @@ class DeepSeekTests(unittest.IsolatedAsyncioTestCase):
         self.assertIn("潮州、汕头、揭阳", answer)
         weather.assert_awaited_once_with("潮汕", "today")
 
-    @patch("agent_try.agent.get_weather", new_callable=AsyncMock)
-    @patch("agent_try.deepseek.AsyncOpenAI")
+    @patch("dianstar.agent.get_weather", new_callable=AsyncMock)
+    @patch("dianstar.deepseek.AsyncOpenAI")
     async def test_unsupported_tool_call_retries_as_text_answer(self, client_class, weather):
         unsupported = SimpleNamespace(id="call_1", function=SimpleNamespace(
             name="web_search", arguments='{}',
@@ -336,8 +336,8 @@ class DeepSeekTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(client.chat.completions.create.await_count, 2)
         self.assertEqual(client.chat.completions.create.await_args.kwargs["tool_choice"], "none")
 
-    @patch("agent_try.agent.get_weather", new_callable=AsyncMock)
-    @patch("agent_try.deepseek.AsyncOpenAI")
+    @patch("dianstar.agent.get_weather", new_callable=AsyncMock)
+    @patch("dianstar.deepseek.AsyncOpenAI")
     async def test_multiple_weather_cities_are_queried_and_summarized(self, client_class, weather):
         calls = [
             SimpleNamespace(id="call_1", function=SimpleNamespace(
@@ -386,10 +386,10 @@ class DeepSeekTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual([message["tool_call_id"] for message in messages[3:]],
                          ["call_1", "call_2", "call_3"])
 
-    @patch("agent_try.agent.get_weather", new_callable=AsyncMock)
-    @patch("agent_try.deepseek.AsyncOpenAI")
+    @patch("dianstar.agent.get_weather", new_callable=AsyncMock)
+    @patch("dianstar.deepseek.AsyncOpenAI")
     async def test_failed_city_does_not_block_other_cities(self, client_class, weather):
-        from agent_try.tools.weather import WeatherLocationNotFound
+        from dianstar.tools.weather import WeatherLocationNotFound
 
         calls = [SimpleNamespace(id=f"call_{index}", function=SimpleNamespace(
             name="get_weather", arguments=f'{{"location":"{city}","date":"today"}}',
@@ -418,10 +418,10 @@ class DeepSeekTests(unittest.IsolatedAsyncioTestCase):
         self.assertIn('"temperature_max_c": 15.0', messages[-1]["content"])
         self.assertEqual(client.chat.completions.create.await_args.kwargs["tool_choice"], "auto")
 
-    @patch("agent_try.agent.get_weather", new_callable=AsyncMock)
-    @patch("agent_try.deepseek.AsyncOpenAI")
+    @patch("dianstar.agent.get_weather", new_callable=AsyncMock)
+    @patch("dianstar.deepseek.AsyncOpenAI")
     async def test_model_retries_missing_location_with_shorter_region(self, client_class, weather):
-        from agent_try.tools.weather import WeatherLocationNotFound
+        from dianstar.tools.weather import WeatherLocationNotFound
 
         weather.side_effect = [
             WeatherLocationNotFound("City not found."),
@@ -478,7 +478,7 @@ class DeepSeekTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(action.arguments["date"], "tomorrow")
         self.assertEqual(client.chat.completions.create.await_args.kwargs["tool_choice"], "auto")
 
-    @patch("agent_try.deepseek.AsyncOpenAI")
+    @patch("dianstar.deepseek.AsyncOpenAI")
     async def test_empty_local_key_stops_before_network(self, client_class):
         with tempfile.TemporaryDirectory() as temporary:
             env_file = Path(temporary) / ".env"
@@ -489,7 +489,7 @@ class DeepSeekTests(unittest.IsolatedAsyncioTestCase):
 
         client_class.assert_not_called()
 
-    @patch("agent_try.deepseek.AsyncOpenAI")
+    @patch("dianstar.deepseek.AsyncOpenAI")
     async def test_local_key_sends_one_question_and_returns_answer(self, client_class):
         with tempfile.TemporaryDirectory() as temporary:
             env_file = Path(temporary) / ".env"
@@ -522,8 +522,8 @@ class DeepSeekTests(unittest.IsolatedAsyncioTestCase):
             extra_body={"thinking": {"type": "enabled"}},
         )
 
-    @patch("agent_try.agent.get_weather", new_callable=AsyncMock)
-    @patch("agent_try.deepseek.AsyncOpenAI")
+    @patch("dianstar.agent.get_weather", new_callable=AsyncMock)
+    @patch("dianstar.deepseek.AsyncOpenAI")
     async def test_geography_question_after_weather_can_be_answered_directly(self, client_class, weather):
         client = client_class.return_value
         client.chat.completions.create = AsyncMock(return_value=SimpleNamespace(choices=[
@@ -549,8 +549,8 @@ class DeepSeekTests(unittest.IsolatedAsyncioTestCase):
         self.assertNotIn("get_weather", sent[0]["content"])
         self.assertEqual(sent[-1], {"role": "user", "content": "汕头附近城市有哪些？"})
 
-    @patch("agent_try.agent.get_weather", new_callable=AsyncMock)
-    @patch("agent_try.deepseek.AsyncOpenAI")
+    @patch("dianstar.agent.get_weather", new_callable=AsyncMock)
+    @patch("dianstar.deepseek.AsyncOpenAI")
     async def test_weather_tool_result_is_returned_to_deepseek(self, client_class, weather):
         weather.return_value = {"location": "北京", "date": "2026-10-20", "temperature_max_c": 18.0,
                                 "temperature_min_c": 8.0, "source": "Open-Meteo forecast"}
@@ -585,8 +585,8 @@ class DeepSeekTests(unittest.IsolatedAsyncioTestCase):
         self.assertIn('"temperature_max_c": 18.0', sent[3]["content"])
         self.assertNotIn("source", sent[3]["content"])
 
-    @patch("agent_try.agent.get_weather", new_callable=AsyncMock)
-    @patch("agent_try.deepseek.AsyncOpenAI")
+    @patch("dianstar.agent.get_weather", new_callable=AsyncMock)
+    @patch("dianstar.deepseek.AsyncOpenAI")
     async def test_weather_answer_is_returned_without_temperature_rule(self, client_class, weather):
         weather.return_value = {"location": "潮州", "date": "2026-10-20",
                                 "temperature_current_c": 25.2,
@@ -613,8 +613,8 @@ class DeepSeekTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(history[-1]["content"], answer)
         self.assertEqual(client.chat.completions.create.await_count, 2)
 
-    @patch("agent_try.agent.get_weather", new_callable=AsyncMock)
-    @patch("agent_try.deepseek.AsyncOpenAI")
+    @patch("dianstar.agent.get_weather", new_callable=AsyncMock)
+    @patch("dianstar.deepseek.AsyncOpenAI")
     async def test_numeric_general_knowledge_does_not_force_weather_tool(self, client_class, weather):
         client = client_class.return_value
         client.chat.completions.create = AsyncMock(return_value=SimpleNamespace(choices=[
@@ -628,7 +628,7 @@ class DeepSeekTests(unittest.IsolatedAsyncioTestCase):
         self.assertIn("100°C", answer)
         weather.assert_not_awaited()
 
-    @patch("agent_try.deepseek.AsyncOpenAI")
+    @patch("dianstar.deepseek.AsyncOpenAI")
     async def test_weather_without_city_can_request_location(self, client_class):
         client = client_class.return_value
         client.chat.completions.create = AsyncMock(return_value=SimpleNamespace(choices=[
@@ -642,7 +642,7 @@ class DeepSeekTests(unittest.IsolatedAsyncioTestCase):
         client.chat.completions.create.assert_awaited_once()
         self.assertNotIn("数据来源", answer)
 
-    @patch("agent_try.deepseek.AsyncOpenAI")
+    @patch("dianstar.deepseek.AsyncOpenAI")
     async def test_incomplete_raw_dsml_is_rejected(self, client_class):
         raw = '<｜｜DSML｜｜ calls><｜｜DSML｜｜ invoke name="get_weather">...</｜｜DSML｜｜ invoke>'
         client = client_class.return_value
@@ -659,8 +659,8 @@ class DeepSeekTests(unittest.IsolatedAsyncioTestCase):
                 await ask_deepseek("潮州今天天气多少度？", history=history, env_file=env_file)
         self.assertEqual(history, [])
 
-    @patch("agent_try.agent.get_weather", new_callable=AsyncMock)
-    @patch("agent_try.deepseek.AsyncOpenAI")
+    @patch("dianstar.agent.get_weather", new_callable=AsyncMock)
+    @patch("dianstar.deepseek.AsyncOpenAI")
     async def test_complete_raw_dsml_executes_weather_without_leaking_markup(self, client_class, weather):
         weather.return_value = {
             "location": "潮州, 广东, 中国", "date": "2026-10-19",
@@ -702,8 +702,8 @@ class DeepSeekTests(unittest.IsolatedAsyncioTestCase):
         self.assertIn('"temperature_current_c": 25.2', sent[-1]["content"])
         self.assertNotIn("current_time", sent[-1]["content"])
 
-    @patch("agent_try.agent.get_weather", new_callable=AsyncMock)
-    @patch("agent_try.deepseek.AsyncOpenAI")
+    @patch("dianstar.agent.get_weather", new_callable=AsyncMock)
+    @patch("dianstar.deepseek.AsyncOpenAI")
     async def test_repeated_raw_tool_markup_uses_clean_result_context(self, client_class, weather):
         weather.return_value = {"location": "潮州", "date": "2026-10-19",
                                 "temperature_current_c": 25.2,
@@ -742,7 +742,7 @@ class DeepSeekTests(unittest.IsolatedAsyncioTestCase):
         self.assertNotIn("DSML", repr(sent))
         self.assertEqual(history[-1]["content"], answer)
 
-    @patch("agent_try.deepseek.AsyncOpenAI")
+    @patch("dianstar.deepseek.AsyncOpenAI")
     async def test_raw_dsml_failure_is_not_shown_or_saved(self, client_class):
         raw = '<｜｜DSML｜｜ invoke name="get_weather">...</｜｜DSML｜｜ invoke>'
         client = client_class.return_value
@@ -758,7 +758,7 @@ class DeepSeekTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(history, [])
         client.chat.completions.create.assert_awaited_once()
 
-    @patch("agent_try.deepseek.AsyncOpenAI")
+    @patch("dianstar.deepseek.AsyncOpenAI")
     async def test_old_raw_dsml_turn_is_not_sent_as_context(self, client_class):
         client = client_class.return_value
         client.chat.completions.create = AsyncMock(return_value=SimpleNamespace(choices=[
@@ -777,7 +777,7 @@ class DeepSeekTests(unittest.IsolatedAsyncioTestCase):
             {"role": "user", "content": "你好"},
         ])
 
-    @patch("agent_try.deepseek.AsyncOpenAI")
+    @patch("dianstar.deepseek.AsyncOpenAI")
     async def test_follow_up_sends_prior_successful_exchange(self, client_class):
         with tempfile.TemporaryDirectory() as temporary:
             env_file = Path(temporary) / ".env"
@@ -819,8 +819,8 @@ class DeepSeekTests(unittest.IsolatedAsyncioTestCase):
                 "role": "assistant", "content": "Answer", "reasoning_content": "Reasoning",
             })
 
-    @patch("agent_try.agent.get_weather", new_callable=AsyncMock)
-    @patch("agent_try.deepseek.AsyncOpenAI")
+    @patch("dianstar.agent.get_weather", new_callable=AsyncMock)
+    @patch("dianstar.deepseek.AsyncOpenAI")
     async def test_resumed_turn_sends_prior_tool_result_and_reasoning(self, client_class, weather):
         weather.return_value = {"location": "洛阳市, 河南, 中国", "date": "2026-10-21",
                                 "temperature_max_c": 18.0, "temperature_min_c": 9.0}
@@ -860,7 +860,7 @@ class DeepSeekTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(request[4]["reasoning_content"], "根据结果回答")
         self.assertEqual(request[5], {"role": "user", "content": "刚才是哪个省？"})
 
-    @patch("agent_try.deepseek.AsyncOpenAI")
+    @patch("dianstar.deepseek.AsyncOpenAI")
     async def test_failed_turn_does_not_enter_history(self, client_class):
         with tempfile.TemporaryDirectory() as temporary:
             env_file = Path(temporary) / ".env"
@@ -891,8 +891,8 @@ class DeepSeekTests(unittest.IsolatedAsyncioTestCase):
         )
         stderr = io.StringIO()
         with (
-            patch.object(sys, "argv", ["agent_try", "Hello"]),
-            patch("agent_try.__main__.ask_deepseek", side_effect=error),
+            patch.object(sys, "argv", ["dianstar", "Hello"]),
+            patch("dianstar.__main__.ask_deepseek", side_effect=error),
             redirect_stderr(stderr),
         ):
             result = main()
@@ -905,10 +905,10 @@ class DeepSeekTests(unittest.IsolatedAsyncioTestCase):
         with tempfile.TemporaryDirectory() as temporary:
             conversation = Conversation.create(Path(temporary))
             with (
-                patch.object(sys, "argv", ["agent_try", "--plain"]),
+                patch.object(sys, "argv", ["dianstar", "--plain"]),
                 patch("builtins.input", side_effect=["Hello", "/exit"]),
-                patch("agent_try.__main__.Conversation.create", return_value=conversation),
-                patch("agent_try.__main__.ask_deepseek", new_callable=AsyncMock, return_value="Hi") as ask,
+                patch("dianstar.__main__.Conversation.create", return_value=conversation),
+                patch("dianstar.__main__.ask_deepseek", new_callable=AsyncMock, return_value="Hi") as ask,
                 redirect_stdout(stdout),
             ):
                 result = main()
@@ -954,13 +954,13 @@ class DeepSeekTests(unittest.IsolatedAsyncioTestCase):
             old.add_exchange("Old question", "Old answer")
             new = Conversation.create(directory)
             with (
-                patch.object(sys, "argv", ["agent_try", "--plain", "--resume", old.id]),
+                patch.object(sys, "argv", ["dianstar", "--plain", "--resume", old.id]),
                 patch("builtins.input", side_effect=[
                     "/clear", "/compress", "After compress", "/new", "Fresh question", "/exit"
                 ]),
-                patch("agent_try.__main__.Conversation.load", return_value=old),
-                patch("agent_try.__main__.Conversation.create", return_value=new),
-                patch("agent_try.__main__.ask_deepseek", new_callable=AsyncMock,
+                patch("dianstar.__main__.Conversation.load", return_value=old),
+                patch("dianstar.__main__.Conversation.create", return_value=new),
+                patch("dianstar.__main__.ask_deepseek", new_callable=AsyncMock,
                       side_effect=["After answer", "Fresh answer"]) as ask,
                 redirect_stdout(io.StringIO()),
             ):
@@ -986,15 +986,15 @@ class DeepSeekTests(unittest.IsolatedAsyncioTestCase):
             second.add_exchange("Second history", "Second reply")
             load = Conversation.load
             with (
-                patch.object(sys, "argv", ["agent_try", "--plain"]),
+                patch.object(sys, "argv", ["dianstar", "--plain"]),
                 patch("builtins.input", side_effect=[
                     "Before switch", f"/resume {second.id}", "After switch", "/exit",
                 ]),
-                patch("agent_try.__main__.Conversation.create", return_value=first),
-                patch("agent_try.__main__.Conversation.load",
+                patch("dianstar.__main__.Conversation.create", return_value=first),
+                patch("dianstar.__main__.Conversation.load",
                       side_effect=lambda conversation_id, _directory=None: load(conversation_id, directory)),
-                patch("agent_try.__main__.list_conversations", return_value=[]),
-                patch("agent_try.__main__.ask_deepseek", new_callable=AsyncMock,
+                patch("dianstar.__main__.list_conversations", return_value=[]),
+                patch("dianstar.__main__.ask_deepseek", new_callable=AsyncMock,
                       side_effect=["Before answer", "After answer"]) as ask,
                 redirect_stdout(output),
             ):
@@ -1016,13 +1016,13 @@ class DeepSeekTests(unittest.IsolatedAsyncioTestCase):
             current = Conversation.create(directory)
             load = Conversation.load
             with (
-                patch.object(sys, "argv", ["agent_try", "--plain"]),
+                patch.object(sys, "argv", ["dianstar", "--plain"]),
                 patch("builtins.input", side_effect=["/resume ../.env", "Still here", "/exit"]),
-                patch("agent_try.__main__.Conversation.create", return_value=current),
-                patch("agent_try.__main__.Conversation.load",
+                patch("dianstar.__main__.Conversation.create", return_value=current),
+                patch("dianstar.__main__.Conversation.load",
                       side_effect=lambda conversation_id, _directory=None: load(conversation_id, directory)),
-                patch("agent_try.__main__.list_conversations", return_value=[]),
-                patch("agent_try.__main__.ask_deepseek", new_callable=AsyncMock,
+                patch("dianstar.__main__.list_conversations", return_value=[]),
+                patch("dianstar.__main__.ask_deepseek", new_callable=AsyncMock,
                       return_value="Yes") as ask,
                 redirect_stdout(io.StringIO()),
                 redirect_stderr(stderr),
@@ -1045,13 +1045,13 @@ class DeepSeekTests(unittest.IsolatedAsyncioTestCase):
             entries = list_conversations(directory)
             load = Conversation.load
             with (
-                patch.object(sys, "argv", ["agent_try", "--plain"]),
+                patch.object(sys, "argv", ["dianstar", "--plain"]),
                 patch("builtins.input", side_effect=["/resume 旅行计划", "Continue", "/exit"]),
-                patch("agent_try.__main__.Conversation.create", return_value=current),
-                patch("agent_try.__main__.Conversation.load",
+                patch("dianstar.__main__.Conversation.create", return_value=current),
+                patch("dianstar.__main__.Conversation.load",
                       side_effect=lambda conversation_id: load(conversation_id, directory)),
-                patch("agent_try.__main__.list_conversations", return_value=entries),
-                patch("agent_try.__main__.ask_deepseek", new_callable=AsyncMock,
+                patch("dianstar.__main__.list_conversations", return_value=entries),
+                patch("dianstar.__main__.ask_deepseek", new_callable=AsyncMock,
                       return_value="Continued") as ask,
                 redirect_stdout(io.StringIO()),
             ):
@@ -1074,15 +1074,15 @@ class DeepSeekTests(unittest.IsolatedAsyncioTestCase):
             selection = next(index for index, entry in enumerate(entries, 1) if entry.id == target.id)
             load = Conversation.load
             with (
-                patch.object(sys, "argv", ["agent_try", "--plain"]),
+                patch.object(sys, "argv", ["dianstar", "--plain"]),
                 patch("builtins.input", side_effect=[
                     "/rename", "临时会话", "/switch", str(selection), "Next", "/exit",
                 ]),
-                patch("agent_try.__main__.Conversation.create", return_value=current),
-                patch("agent_try.__main__.Conversation.load",
+                patch("dianstar.__main__.Conversation.create", return_value=current),
+                patch("dianstar.__main__.Conversation.load",
                       side_effect=lambda conversation_id: load(conversation_id, directory)),
-                patch("agent_try.__main__.list_conversations", return_value=entries),
-                patch("agent_try.__main__.ask_deepseek", new_callable=AsyncMock,
+                patch("dianstar.__main__.list_conversations", return_value=entries),
+                patch("dianstar.__main__.ask_deepseek", new_callable=AsyncMock,
                       return_value="Next answer") as ask,
                 redirect_stdout(output),
             ):
@@ -1108,11 +1108,11 @@ class DeepSeekTests(unittest.IsolatedAsyncioTestCase):
             second.rename("同名")
             entries = list_conversations(directory)
             with (
-                patch.object(sys, "argv", ["agent_try", "--plain"]),
+                patch.object(sys, "argv", ["dianstar", "--plain"]),
                 patch("builtins.input", side_effect=["/resume 同名", "Still here", "/exit"]),
-                patch("agent_try.__main__.Conversation.create", return_value=current),
-                patch("agent_try.__main__.list_conversations", return_value=entries),
-                patch("agent_try.__main__.ask_deepseek", new_callable=AsyncMock,
+                patch("dianstar.__main__.Conversation.create", return_value=current),
+                patch("dianstar.__main__.list_conversations", return_value=entries),
+                patch("dianstar.__main__.ask_deepseek", new_callable=AsyncMock,
                       return_value="Yes"),
                 redirect_stdout(output),
             ):

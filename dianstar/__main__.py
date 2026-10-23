@@ -59,7 +59,7 @@ def _answer(question: str, conversation: Conversation | None = None) -> bool:
 
 def main() -> int:
     parser = argparse.ArgumentParser(
-        prog="agent_try",
+        prog="dianstar",
         description="Chat with DianStar. Project file tools are not implemented yet.",
     )
     parser.add_argument("question", nargs="?", help="Ask once; omit to start interactive chat")
@@ -109,7 +109,7 @@ def main() -> int:
                 print("指令：/help、/new、/rename 新名称、/resume 会话名、/switch、/compress、/config、/exit。")
                 continue
             if question == "/config":
-                print("配置界面在 TUI 中使用；运行 python -m agent_try 后输入 /config。")
+                print("配置界面在 TUI 中使用；运行 python -m dianstar 后输入 /config。")
                 continue
             if question == "/new":
                 conversation = Conversation.create()

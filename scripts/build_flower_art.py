@@ -7,8 +7,8 @@ from PIL import Image, ImageFilter
 
 
 ROOT = Path(__file__).resolve().parents[1]
-SOURCE = ROOT / "agent_try" / "assets" / "kapok-source.png"
-TARGET = ROOT / "agent_try" / "assets" / "kapok.json"
+SOURCE = ROOT / "dianstar" / "assets" / "kapok-source.png"
+TARGET = ROOT / "dianstar" / "assets" / "kapok.json"
 DOTS = ((0, 0, 0x01), (0, 1, 0x02), (0, 2, 0x04), (0, 3, 0x40),
         (1, 0, 0x08), (1, 1, 0x10), (1, 2, 0x20), (1, 3, 0x80))
 

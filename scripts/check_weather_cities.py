@@ -8,7 +8,7 @@ import math
 from datetime import date, datetime, timezone
 from pathlib import Path
 
-from agent_try.tools.weather import WeatherUnavailable, get_weather
+from dianstar.tools.weather import WeatherUnavailable, get_weather
 
 
 ROOT = Path(__file__).resolve().parent.parent

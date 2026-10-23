@@ -3,10 +3,10 @@ requires = ["setuptools>=61"]
 build-backend = "setuptools.build_meta"
 
 [project]
-name = "agent-try"
+name = "dianstar"
 version = "0.1.0"
-description = "A small Python agent learning project"
-requires-python = ">=3.10"
+description = "DianStar local command-line agent"
+requires-python = ">=3.11"
 dependencies = [
     "openai>=1.58,<4",
     "python-dotenv>=1.0,<2",
@@ -17,11 +17,11 @@ dependencies = [
 ]
 
 [project.scripts]
-agent-try = "agent_try.__main__:main"
-ds = "agent_try.__main__:main"
+dianstar = "dianstar.__main__:main"
+ds = "dianstar.__main__:main"
 
 [tool.setuptools.packages.find]
-include = ["agent_try*"]
+include = ["dianstar*"]
 
 [tool.setuptools.package-data]
-agent_try = ["system_prompt.md", "assets/rabbit.json", "assets/rabbit-source.png", "assets/kapok.json", "assets/kapok-source.png"]
+dianstar = ["system_prompt.md", "assets/rabbit.json", "assets/rabbit-source.png", "assets/kapok.json", "assets/kapok-source.png"]

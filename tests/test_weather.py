@@ -6,12 +6,12 @@ import unittest
 from unittest.mock import AsyncMock, patch
 from zoneinfo import ZoneInfo
 
-from agent_try.tools.weather import (
+from dianstar.tools.weather import (
     FORECAST_URL, GEOCODING_URL, WeatherDateInvalid, WeatherLocationAmbiguous,
     WeatherLocationMismatch,
     WeatherLocationNotFound, WeatherUnavailable, get_weather,
 )
-from agent_try.tools.weather_contract import weather_data
+from dianstar.tools.weather_contract import weather_data
 
 
 PLACE = {
@@ -23,7 +23,7 @@ PLACE = {
 
 
 class WeatherTests(unittest.IsolatedAsyncioTestCase):
-    @patch("agent_try.tools.weather._get_json", new_callable=AsyncMock)
+    @patch("dianstar.tools.weather._get_json", new_callable=AsyncMock)
     async def test_bare_luoyang_prefers_henan_city_over_same_named_towns(self, get_json):
         tomorrow = (dt.datetime.now(ZoneInfo("Asia/Shanghai")).date() + dt.timedelta(days=1)).isoformat()
         get_json.side_effect = [
@@ -35,7 +35,7 @@ class WeatherTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(get_json.await_args_list[0].args[1]["name"], "洛阳市")
         self.assertEqual(result["location"], "洛阳市, 河南, 中国")
 
-    @patch("agent_try.tools.weather._get_json", new_callable=AsyncMock)
+    @patch("dianstar.tools.weather._get_json", new_callable=AsyncMock)
     async def test_city_suffix_is_removed_when_service_indexes_short_name(self, get_json):
         today = dt.datetime.now(ZoneInfo("Asia/Shanghai")).date().isoformat()
         get_json.side_effect = [
@@ -47,7 +47,7 @@ class WeatherTests(unittest.IsolatedAsyncioTestCase):
         self.assertIn("乌鲁木齐", result["location"])
         self.assertEqual(get_json.await_args_list[1].args[1]["name"], "乌鲁木齐")
 
-    @patch("agent_try.tools.weather._get_json", new_callable=AsyncMock)
+    @patch("dianstar.tools.weather._get_json", new_callable=AsyncMock)
     async def test_city_fallback_does_not_choose_a_prefix_match(self, get_json):
         get_json.side_effect = [
             {},
@@ -57,14 +57,14 @@ class WeatherTests(unittest.IsolatedAsyncioTestCase):
             await get_weather("乌鲁木齐市", "today")
         self.assertEqual(get_json.await_count, 2)
 
-    @patch("agent_try.tools.weather._get_json", new_callable=AsyncMock)
+    @patch("dianstar.tools.weather._get_json", new_callable=AsyncMock)
     async def test_geocoder_must_return_requested_chinese_city(self, get_json):
         get_json.return_value = {"results": [{**PLACE, "name": "洛阳市", "admin1": "河南"}]}
         with self.assertRaises(WeatherLocationMismatch):
             await get_weather("北京", "today")
         get_json.assert_awaited_once()
 
-    @patch("agent_try.tools.weather._get_json", new_callable=AsyncMock)
+    @patch("dianstar.tools.weather._get_json", new_callable=AsyncMock)
     async def test_exact_chinese_city_can_follow_wrong_geocoder_candidate(self, get_json):
         tomorrow = (dt.datetime.now(ZoneInfo("Asia/Shanghai")).date()
                     + dt.timedelta(days=1)).isoformat()
@@ -76,7 +76,7 @@ class WeatherTests(unittest.IsolatedAsyncioTestCase):
         result = await get_weather("北京", "tomorrow")
         self.assertEqual(result["location"], "北京, 北京, 中国")
 
-    @patch("agent_try.tools.weather._get_json", new_callable=AsyncMock)
+    @patch("dianstar.tools.weather._get_json", new_callable=AsyncMock)
     async def test_tool_does_not_invent_a_shorter_region_name(self, get_json):
         get_json.side_effect = [{}, {}]
         with self.assertRaises(WeatherLocationNotFound):
@@ -84,7 +84,7 @@ class WeatherTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(get_json.await_args_list[0].args[1]["name"], "乌鲁木齐市, 新疆维吾尔自治区, 中国")
         self.assertEqual(get_json.await_args_list[1].args[1]["name"], "乌鲁木齐, 新疆维吾尔自治区, 中国")
 
-    @patch("agent_try.tools.weather._get_json", new_callable=AsyncMock)
+    @patch("dianstar.tools.weather._get_json", new_callable=AsyncMock)
     async def test_chinese_city_suffix_fallback(self, get_json):
         today = dt.datetime.now(ZoneInfo("Asia/Shanghai")).date().isoformat()
         get_json.side_effect = [
@@ -96,7 +96,7 @@ class WeatherTests(unittest.IsolatedAsyncioTestCase):
         self.assertIn("潮州市", result["location"])
         self.assertEqual(get_json.await_args_list[1].args[1]["name"], "潮州市, 广东, 中国")
 
-    @patch("agent_try.tools.weather._get_json", new_callable=AsyncMock)
+    @patch("dianstar.tools.weather._get_json", new_callable=AsyncMock)
     async def test_today_uses_place_timezone_and_extracts_daily_high_low(self, get_json):
         today = dt.datetime.now(ZoneInfo("Asia/Shanghai")).date().isoformat()
         get_json.side_effect = [
@@ -131,7 +131,7 @@ class WeatherTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(get_json.await_args_list[1].args[1]["timezone"], "Asia/Shanghai")
         self.assertEqual(get_json.await_args_list[1].args[1]["current"], "temperature_2m,weather_code,wind_speed_10m")
 
-    @patch("agent_try.tools.weather._get_json", new_callable=AsyncMock)
+    @patch("dianstar.tools.weather._get_json", new_callable=AsyncMock)
     async def test_future_date_has_no_current_temperature(self, get_json):
         tomorrow = (dt.datetime.now(ZoneInfo("Asia/Shanghai")).date() + dt.timedelta(days=1)).isoformat()
         get_json.side_effect = [
@@ -145,7 +145,7 @@ class WeatherTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(result["wind_speed_max_kmh"], 12.0)
         self.assertNotIn("current", get_json.await_args_list[1].args[1])
 
-    @patch("agent_try.tools.weather._get_json", new_callable=AsyncMock)
+    @patch("dianstar.tools.weather._get_json", new_callable=AsyncMock)
     async def test_date_outside_window_stops_before_forecast(self, get_json):
         get_json.return_value = {"results": [PLACE]}
         future = (dt.datetime.now(ZoneInfo("Asia/Shanghai")).date() + dt.timedelta(days=8)).isoformat()
@@ -153,14 +153,14 @@ class WeatherTests(unittest.IsolatedAsyncioTestCase):
             await get_weather("北京", future)
         get_json.assert_awaited_once()
 
-    @patch("agent_try.tools.weather._get_json", new_callable=AsyncMock)
+    @patch("dianstar.tools.weather._get_json", new_callable=AsyncMock)
     async def test_ambiguous_city_requests_qualification(self, get_json):
         get_json.return_value = {"results": [PLACE, {**PLACE, "country": "Other", "population": 17_000_000}]}
         with self.assertRaisesRegex(WeatherLocationAmbiguous, "ambiguous"):
             await get_weather("北京", "today")
         get_json.assert_awaited_once()
 
-    @patch("agent_try.tools.weather._get_json", new_callable=AsyncMock)
+    @patch("dianstar.tools.weather._get_json", new_callable=AsyncMock)
     async def test_major_city_wins_over_small_same_named_places(self, get_json):
         today = dt.datetime.now(ZoneInfo("Asia/Shanghai")).date().isoformat()
         get_json.side_effect = [

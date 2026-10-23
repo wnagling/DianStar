@@ -24,7 +24,7 @@ if ($Check) {
 }
 
 Write-Host "Python: $pythonPath"
-& $pythonPath -m agent_try
+& $pythonPath -m dianstar
 if ($LASTEXITCODE -ne 0) {
     Write-Host "DianStar exited with code $LASTEXITCODE. See the error above." -ForegroundColor Red
 }

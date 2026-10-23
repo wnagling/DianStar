@@ -9,10 +9,10 @@ from unittest.mock import AsyncMock, patch
 from textual.containers import Vertical
 from textual.widgets import Button, Input, Label, RichLog, Static
 
-from agent_try.conversations import Conversation
-from agent_try.rabbit_art import rabbit_lines
-from agent_try.tui import DianStarApp
-from agent_try.welcome_art import welcome_art_lines
+from dianstar.conversations import Conversation
+from dianstar.rabbit_art import rabbit_lines
+from dianstar.tui import DianStarApp
+from dianstar.welcome_art import welcome_art_lines
 
 
 class TuiTests(unittest.IsolatedAsyncioTestCase):
@@ -88,7 +88,7 @@ class TuiTests(unittest.IsolatedAsyncioTestCase):
                 on_stream("第一段第二段")
                 return "第一段第二段"
 
-            with patch("agent_try.tui.ask_deepseek", side_effect=answer_later):
+            with patch("dianstar.tui.ask_deepseek", side_effect=answer_later):
                 async with app.run_test() as pilot:
                     app.query_one("#input", Input).value = "测试流式输出"
                     await pilot.press("enter")
@@ -161,7 +161,7 @@ class TuiTests(unittest.IsolatedAsyncioTestCase):
         with tempfile.TemporaryDirectory() as temporary:
             conversation = Conversation.create(Path(temporary))
             app = DianStarApp(conversation)
-            with patch("agent_try.tui.ask_deepseek", new_callable=AsyncMock, return_value="你好！"):
+            with patch("dianstar.tui.ask_deepseek", new_callable=AsyncMock, return_value="你好！"):
                 async with app.run_test() as pilot:
                     await pilot.pause()
                     self.assertGreater(len(app.query_one("#chat", RichLog).lines), 5)

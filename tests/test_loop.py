@@ -2,7 +2,7 @@
 
 import unittest
 
-from agent_try.loop import Observation, ToolAction, run_loop
+from dianstar.loop import Observation, ToolAction, run_loop
 
 class LoopTests(unittest.IsolatedAsyncioTestCase):
     async def test_model_final_answer_returns_without_answer_verifier(self):
