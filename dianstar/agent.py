@@ -7,7 +7,9 @@ from typing import Callable
 from .config import load_model_settings
 from .deepseek import ENV_FILE, DeepSeekSession, create_client, usable_history
 from .loop import Observation, ToolAction, run_loop
-from .prompts import ASSISTANT_INSTRUCTIONS
+from .prompts import build_system_prompt
+from .tools.date_calculator import DATE_TOOL, DateCalculationError, calculate_date
+from .tools.number_calculator import NUMBER_TOOL, NumberCalculationError, calculate_number
 from .tools.weather import (
     WEATHER_TOOL, WeatherDateInvalid, WeatherLocationAmbiguous, WeatherLocationMismatch,
     WeatherLocationNotFound,
@@ -32,6 +34,7 @@ async def ask_deepseek(
     settings = load_model_settings(env_file.parent / ".local" / "config.json")
     if not settings.default_model:
         raise ValueError("当前默认 Key 尚未添加模型，请在 /config 的 model 中先添加模型。")
+    instructions = build_system_prompt()
     client = create_client(env_file, key_id=settings.default_key_id)
     def observe_error(action: ToolAction, code: str) -> Observation:
         result = {"error": code, "requested_location": action.arguments["location"],
@@ -55,10 +58,30 @@ async def ask_deepseek(
         session.observe(action, weather_data(result))
         return Observation(action, result)
 
+    async def act_date(action: ToolAction) -> Observation:
+        try:
+            result = calculate_date(**action.arguments)
+        except DateCalculationError as error:
+            result = {"error": error.code, "message": str(error), "requested": action.arguments}
+        session.observe(action, json.dumps(result, ensure_ascii=False))
+        return Observation(action, result)
+
+    async def act_number(action: ToolAction) -> Observation:
+        try:
+            result = calculate_number(**action.arguments)
+        except NumberCalculationError as error:
+            result = {"error": error.code, "message": str(error), "requested": action.arguments}
+        session.observe(action, json.dumps(result, ensure_ascii=False))
+        return Observation(action, result)
+
     # 同一份注册表绑定模型可见的工具定义和实际执行函数。
-    tool_registry = {WEATHER_TOOL["function"]["name"]: (WEATHER_TOOL, act_weather)}
+    tool_registry = {
+        WEATHER_TOOL["function"]["name"]: (WEATHER_TOOL, act_weather),
+        DATE_TOOL["function"]["name"]: (DATE_TOOL, act_date),
+        NUMBER_TOOL["function"]["name"]: (NUMBER_TOOL, act_number),
+    }
     session = DeepSeekSession(
-        client, question, cleaned_history, ASSISTANT_INSTRUCTIONS,
+        client, question, cleaned_history, instructions,
         [schema for schema, _ in tool_registry.values()],
         on_stream=on_stream,
         on_thinking=on_thinking,

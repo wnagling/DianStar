@@ -17,8 +17,10 @@ from dianstar.conversations import Conversation, list_conversations
 from dianstar.agent import ask_deepseek
 from dianstar.deepseek import DeepSeekSession, _parse_unparsed_tool_calls
 from dianstar.loop import Observation, ToolAction
-from dianstar.prompts import ASSISTANT_INSTRUCTIONS
+from dianstar.prompts import ASSISTANT_INSTRUCTIONS, build_system_prompt
 from dianstar.tools.weather import WEATHER_TOOL
+from dianstar.tools.date_calculator import DATE_TOOL
+from dianstar.tools.number_calculator import NUMBER_TOOL
 
 
 class FakeStream:
@@ -514,10 +516,10 @@ class DeepSeekTests(unittest.IsolatedAsyncioTestCase):
         )
         client.chat.completions.create.assert_awaited_once_with(
             model="deepseek-flash",
-            messages=[{"role": "system", "content": ASSISTANT_INSTRUCTIONS},
+            messages=[{"role": "system", "content": build_system_prompt()},
                       {"role": "user", "content": "Hello"}],
             stream=False,
-            tools=[WEATHER_TOOL],
+            tools=[WEATHER_TOOL, DATE_TOOL, NUMBER_TOOL],
             tool_choice="auto",
             extra_body={"thinking": {"type": "enabled"}},
         )
@@ -544,7 +546,7 @@ class DeepSeekTests(unittest.IsolatedAsyncioTestCase):
         weather.assert_not_awaited()
         client.chat.completions.create.assert_awaited_once()
         sent = client.chat.completions.create.await_args.kwargs["messages"]
-        self.assertEqual(sent[0], {"role": "system", "content": ASSISTANT_INSTRUCTIONS})
+        self.assertEqual(sent[0], {"role": "system", "content": build_system_prompt()})
         self.assertIn("自行选择可用工具", sent[0]["content"])
         self.assertNotIn("get_weather", sent[0]["content"])
         self.assertEqual(sent[-1], {"role": "user", "content": "汕头附近城市有哪些？"})
@@ -773,7 +775,7 @@ class DeepSeekTests(unittest.IsolatedAsyncioTestCase):
             env_file.write_text("DEEPSEEK_API_KEY=test-key\n", encoding="utf-8")
             await ask_deepseek("你好", history=old_history, env_file=env_file)
         self.assertEqual(client.chat.completions.create.await_args.kwargs["messages"], [
-            {"role": "system", "content": ASSISTANT_INSTRUCTIONS},
+            {"role": "system", "content": build_system_prompt()},
             {"role": "user", "content": "你好"},
         ])
 
@@ -801,7 +803,7 @@ class DeepSeekTests(unittest.IsolatedAsyncioTestCase):
             await ask_deepseek("Follow up", history=history, env_file=env_file)
 
         self.assertEqual(client.chat.completions.create.await_args_list[1].kwargs["messages"], [
-            {"role": "system", "content": ASSISTANT_INSTRUCTIONS},
+            {"role": "system", "content": build_system_prompt()},
             {"role": "user", "content": "First question"},
             {"role": "assistant", "content": "First answer", "reasoning_content": "First reasoning"},
             {"role": "user", "content": "Follow up"},
@@ -880,7 +882,7 @@ class DeepSeekTests(unittest.IsolatedAsyncioTestCase):
             await ask_deepseek("Retry", history=history, env_file=env_file)
 
         self.assertEqual(client.chat.completions.create.await_args_list[1].kwargs["messages"], [
-            {"role": "system", "content": ASSISTANT_INSTRUCTIONS},
+            {"role": "system", "content": build_system_prompt()},
             {"role": "user", "content": "Retry"},
         ])
 

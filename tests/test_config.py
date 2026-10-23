@@ -16,7 +16,7 @@ from dianstar.config import (create_key_profile, delete_key_profile, load_model_
 from dianstar.agent import ask_deepseek
 from dianstar.config_ui import ConfigScreen
 from dianstar.conversations import Conversation
-from dianstar.tui import DianStarApp
+from dianstar.tui import ChatInput, DianStarApp
 
 
 class ConfigTests(unittest.TestCase):
@@ -125,7 +125,7 @@ class ConfigTuiTests(unittest.IsolatedAsyncioTestCase):
             app = DianStarApp(Conversation.create(root / "conversations"),
                               config_file=config_file, env_file=env_file)
             async with app.run_test(size=(100, 35)) as pilot:
-                app.query_one("#input", Input).value = "/config"
+                app.query_one("#input", ChatInput).text = "/config"
                 await pilot.press("enter", "enter", "enter")
                 screen = app.screen
                 key = screen.query_one("#config-key", Input)
@@ -178,7 +178,7 @@ class ConfigTuiTests(unittest.IsolatedAsyncioTestCase):
             app = DianStarApp(Conversation.create(root / "conversations"),
                               config_file=config_file, env_file=env_file)
             async with app.run_test(size=(100, 35)) as pilot:
-                app.query_one("#input", Input).value = "/config"
+                app.query_one("#input", ChatInput).text = "/config"
                 await pilot.press("enter", "down", "enter")
                 screen = app.screen
                 for button in screen.query("#models-page Button"):
@@ -223,7 +223,7 @@ class ConfigTuiTests(unittest.IsolatedAsyncioTestCase):
             app = DianStarApp(Conversation.create(root / "conversations"),
                               config_file=config_file, env_file=env_file)
             async with app.run_test() as pilot:
-                app.query_one("#input", Input).value = "/config"
+                app.query_one("#input", ChatInput).text = "/config"
                 await pilot.press("enter", "enter")
                 await pilot.pause()
                 await pilot.click("#key-edit")
@@ -260,7 +260,7 @@ class ConfigTuiTests(unittest.IsolatedAsyncioTestCase):
             app = DianStarApp(Conversation.create(root / "conversations"),
                               config_file=config_file, env_file=env_file)
             async with app.run_test() as pilot:
-                app.query_one("#input", Input).value = "/config"
+                app.query_one("#input", ChatInput).text = "/config"
                 await pilot.press("enter", "enter", "enter")
                 screen = app.screen
                 self.assertEqual(screen.page, "key-edit")
@@ -301,7 +301,7 @@ class ConfigTuiTests(unittest.IsolatedAsyncioTestCase):
             app = DianStarApp(Conversation.create(root / "conversations"),
                               config_file=config_file, env_file=env_file)
             async with app.run_test() as pilot:
-                app.query_one("#input", Input).value = "/config"
+                app.query_one("#input", ChatInput).text = "/config"
                 await pilot.press("enter", "enter", "down", "enter")
                 screen = app.screen
                 self.assertEqual(screen.page, "key-edit")
@@ -361,7 +361,7 @@ class ConfigTuiTests(unittest.IsolatedAsyncioTestCase):
             app = DianStarApp(Conversation.create(root / "conversations"),
                               config_file=config_file, env_file=env_file)
             async with app.run_test() as pilot:
-                app.query_one("#input", Input).value = "/config"
+                app.query_one("#input", ChatInput).text = "/config"
                 await pilot.press("enter", "down", "enter")
                 screen = app.screen
                 self.assertEqual(screen.page, "models")
@@ -396,7 +396,7 @@ class ConfigTuiTests(unittest.IsolatedAsyncioTestCase):
             app = DianStarApp(Conversation.create(root / "conversations"),
                               config_file=config_file, env_file=env_file)
             async with app.run_test() as pilot:
-                app.query_one("#input", Input).value = "/config"
+                app.query_one("#input", ChatInput).text = "/config"
                 await pilot.press("enter")
                 await pilot.pause()
                 screen = app.screen
@@ -444,7 +444,7 @@ class ConfigTuiTests(unittest.IsolatedAsyncioTestCase):
             app = DianStarApp(Conversation.create(root / "conversations"),
                               config_file=config_file, env_file=root / ".env")
             async with app.run_test() as pilot:
-                app.query_one("#input", Input).value = "/config"
+                app.query_one("#input", ChatInput).text = "/config"
                 await pilot.press("enter", "down", "down", "down", "enter")
                 screen = app.screen
                 self.assertEqual(screen.page, "shortcuts")
@@ -465,7 +465,7 @@ class ConfigTuiTests(unittest.IsolatedAsyncioTestCase):
                 await pilot.press("alt+m")
                 self.assertIsInstance(app.screen, ConfigScreen,
                     f"bindings={[(b.action, b.priority) for b in app._bindings.key_to_bindings.get('alt+m', [])]}; "
-                    f"busy={app.busy}; input={app.query_one('#input', Input).value!r}")
+                    f"busy={app.busy}; input={app.query_one('#input', ChatInput).text!r}")
                 self.assertEqual(app.screen.page, "default")
                 await pilot.press("down", "enter")
                 self.assertEqual(load_model_settings(config_file).default_model, "deepseek-v4-pro")

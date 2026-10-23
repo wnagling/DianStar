@@ -11,7 +11,8 @@ from textual.app import App, ComposeResult
 from textual.binding import Binding
 from textual.containers import Horizontal, Vertical
 from textual.events import Resize
-from textual.widgets import Button, Input, Label, ListItem, ListView, RichLog, Static
+from textual.message import Message
+from textual.widgets import Button, Label, ListItem, ListView, RichLog, Static, TextArea
 
 from .agent import ask_deepseek
 from .config import CONFIG_FILE, ENV_FILE, load_model_settings
@@ -32,6 +33,27 @@ COMMANDS = {
 }
 
 
+class ChatInput(TextArea):
+    """保留粘贴文本的换行，只有明确按下发送键才提交。"""
+
+    BINDINGS = [
+        Binding("enter", "submit", "发送", priority=True, show=False),
+        Binding("shift+enter,ctrl+j", "insert_newline", "换行", priority=True, show=False),
+    ]
+
+    class Submitted(Message):
+        def __init__(self, value: str) -> None:
+            super().__init__()
+            self.value = value
+
+    def action_submit(self) -> None:
+        self.post_message(self.Submitted(self.text))
+
+    def action_insert_newline(self) -> None:
+        result = self.replace("\n", *self.selection, maintain_selection_offset=False)
+        self.move_cursor(result.end_location)
+
+
 class DianStarApp(App[None]):
     """使用 Textual 绘制的本地聊天界面。"""
 
@@ -49,7 +71,7 @@ class DianStarApp(App[None]):
     #thinking { display: none; height: 6; margin: 0 1; padding: 0 1; border: round $secondary; scrollbar-size-vertical: 0; }
     #stream { display: none; height: auto; max-height: 8; margin: 0 1; padding: 0 1; }
     #status { height: 1; padding: 0 1; color: $text-muted; }
-    #input { height: 1; margin: 0 1; background: $boost; }
+    #input { height: auto; min-height: 1; max-height: 6; margin: 0 1; background: $boost; scrollbar-size-vertical: 1; }
     #hints { height: auto; max-height: 2; margin: 0 1; color: $text-muted; }
     #bottom { height: 1; margin: 0 1; }
     #key-help { width: 1fr; color: $text-muted; }
@@ -84,7 +106,8 @@ class DianStarApp(App[None]):
                 yield thinking
                 yield Static("", id="stream")
                 yield Static("", id="status")
-                yield Input(placeholder="输入消息；/ 查看命令", id="input", compact=True)
+                yield ChatInput(placeholder="输入消息；Enter 发送，Shift+Enter / Ctrl+J 换行",
+                                id="input", compact=True, highlight_cursor_line=False)
                 yield Static("", id="hints")
                 with Horizontal(id="bottom"):
                     yield Static("", id="key-help")
@@ -96,7 +119,7 @@ class DianStarApp(App[None]):
         await self._refresh_sessions()
         self._render_history()
         self.call_after_refresh(self._render_history)
-        self.query_one("#input", Input).focus()
+        self.query_one("#input", ChatInput).focus()
 
     def on_resize(self, event: Resize) -> None:
         if self._welcome_only:
@@ -156,7 +179,7 @@ class DianStarApp(App[None]):
         if self._welcome_only:
             self.call_after_refresh(self._render_history)
         if not visible:
-            self.query_one("#input", Input).focus()
+            self.query_one("#input", ChatInput).focus()
 
     def action_toggle_sessions(self) -> None:
         if isinstance(self.screen, ConfigScreen):
@@ -203,12 +226,12 @@ class DianStarApp(App[None]):
             model = load_model_settings(self.config_file).default_model
             self._status(f"已切换到 {model}，下次提问生效。")
             self._refresh_key_help()
-        self.query_one("#input", Input).focus()
+        self.query_one("#input", ChatInput).focus()
 
     def on_button_pressed(self, event: Button.Pressed) -> None:
         if event.button.id == "toggle-sessions":
             self.action_toggle_sessions()
-            self.query_one("#input", Input).focus()
+            self.query_one("#input", ChatInput).focus()
 
     async def _refresh_sessions(self) -> None:
         view = self.query_one("#session-list", ListView)
@@ -230,7 +253,7 @@ class DianStarApp(App[None]):
             self._render_history()
             await self._refresh_sessions()
             self._status(f"已切换到 {self.conversation.name or '未命名会话'}")
-            self.query_one("#input", Input).focus()
+            self.query_one("#input", ChatInput).focus()
         except (ValueError, OSError) as error:
             self._status(f"无法读取会话：{error}")
 
@@ -238,36 +261,39 @@ class DianStarApp(App[None]):
         if event.item.id and event.item.id.startswith("session-"):
             await self._open_conversation(event.item.id.removeprefix("session-"))
 
-    def on_input_changed(self, event: Input.Changed) -> None:
-        if event.input.id != "input":
+    def on_text_area_changed(self, event: TextArea.Changed) -> None:
+        if event.text_area.id != "input":
             return
-        value = event.value
-        if value.startswith("/") and " " not in value:
+        value = event.text_area.text
+        if value.startswith("/") and not any(char.isspace() for char in value):
             matches = [command for command in COMMANDS if command.startswith(value)]
             self.query_one("#hints", Static).update("  ".join(matches))
         else:
             self.query_one("#hints", Static).update("")
 
     def action_complete_command(self) -> None:
-        field = self.query_one("#input", Input)
-        value = field.value
-        if not value.startswith("/") or " " in value:
+        field = self.query_one("#input", ChatInput)
+        value = field.text
+        if not value.startswith("/") or any(char.isspace() for char in value):
             return
         matches = [command for command in COMMANDS if command.startswith(value)]
         if matches:
-            field.value = matches[0] + (" " if matches[0] in {"/rename", "/resume"} else "")
-            field.cursor_position = len(field.value)
+            field.text = matches[0] + (" " if matches[0] in {"/rename", "/resume"} else "")
+            field.move_cursor(field.document.end)
 
-    async def on_input_submitted(self, event: Input.Submitted) -> None:
-        value = event.value.strip()
-        field = self.query_one("#input", Input)
-        if self.busy and value != "/exit" and value != "/help":
+    async def on_chat_input_submitted(self, event: ChatInput.Submitted) -> None:
+        value = event.value
+        single_line = "\n" not in value and "\r" not in value
+        if single_line:
+            value = value.strip()
+        field = self.query_one("#input", ChatInput)
+        if self.busy and not (single_line and value in {"/exit", "/help"}):
             self._status("请等待当前回答完成。")
             return
-        field.value = ""
-        if not value:
+        field.text = ""
+        if not value.strip():
             return
-        if value.startswith("/"):
+        if single_line and value.startswith("/"):
             await self._command(value)
             return
         self.busy = True
@@ -302,7 +328,7 @@ class DianStarApp(App[None]):
             self._stream_answer("")
             self._stream_thinking("")
             self.busy = False
-            self.query_one("#input", Input).focus()
+            self.query_one("#input", ChatInput).focus()
 
     async def _command(self, command_line: str) -> None:
         command, _, argument = command_line.partition(" ")
@@ -330,7 +356,7 @@ class DianStarApp(App[None]):
             elif command == "/rename":
                 if not argument:
                     self._status("输入 /rename 新名称")
-                    self.query_one("#input", Input).value = "/rename "
+                    self.query_one("#input", ChatInput).text = "/rename "
                     return
                 self.conversation.rename(argument)
                 self.query_one("#session-name", Label).update(self.conversation.name or "未命名会话")
@@ -339,7 +365,7 @@ class DianStarApp(App[None]):
             elif command == "/resume":
                 if not argument:
                     self._status("输入 /resume 会话名，或用 /switch 选择。")
-                    self.query_one("#input", Input).value = "/resume "
+                    self.query_one("#input", ChatInput).text = "/resume "
                     return
                 matches = [entry for entry in list_conversations(self.conversation.directory) if entry.name == argument]
                 if len(matches) > 1:
@@ -359,4 +385,4 @@ class DianStarApp(App[None]):
         self._refresh_key_help()
         if saved:
             self._status("配置已保存，下次提问将使用所选默认模型。")
-        self.query_one("#input", Input).focus()
+        self.query_one("#input", ChatInput).focus()

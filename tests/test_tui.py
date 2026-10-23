@@ -7,15 +7,100 @@ from pathlib import Path
 from unittest.mock import AsyncMock, patch
 
 from textual.containers import Vertical
-from textual.widgets import Button, Input, Label, RichLog, Static
+from textual.events import Paste
+from textual.widgets import Button, Label, RichLog, Static
 
 from dianstar.conversations import Conversation
 from dianstar.rabbit_art import rabbit_lines
-from dianstar.tui import DianStarApp
+from dianstar.tui import ChatInput, DianStarApp
 from dianstar.welcome_art import welcome_art_lines
 
 
 class TuiTests(unittest.IsolatedAsyncioTestCase):
+    async def test_multiline_paste_is_not_sent_until_enter_and_is_saved_intact(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            conversation = Conversation.create(Path(temporary))
+            app = DianStarApp(conversation)
+            message = "第一行\n\n  保留缩进的第二行\n<document>外部材料</document>\n"
+            with patch("dianstar.tui.ask_deepseek", new_callable=AsyncMock,
+                       return_value="已收到完整内容。") as ask:
+                async with app.run_test() as pilot:
+                    field = app.query_one("#input", ChatInput)
+                    app.post_message(Paste(message))
+                    await pilot.pause()
+                    self.assertEqual(field.text, message)
+                    self.assertGreater(field.size.height, 1)
+                    ask.assert_not_awaited()
+                    await pilot.press("enter")
+                    await app.workers.wait_for_complete()
+                    await pilot.pause()
+                    self.assertEqual(ask.await_args.args, (message,))
+                    self.assertEqual(field.text, "")
+                    self.assertEqual(field.size.height, 1)
+            restored = Conversation.load(conversation.id, Path(temporary))
+            self.assertEqual(restored.messages[0]["content"], message)
+
+    async def test_newline_keys_edit_without_submitting(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            app = DianStarApp(Conversation.create(Path(temporary)))
+            with patch("dianstar.tui.ask_deepseek", new_callable=AsyncMock) as ask:
+                async with app.run_test() as pilot:
+                    await pilot.press("a", "shift+enter", "b", "ctrl+j", "c")
+                    self.assertEqual(app.query_one("#input", ChatInput).text, "a\nb\nc")
+                    ask.assert_not_awaited()
+
+    async def test_clipboard_paste_keeps_multiple_lines_without_sending(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            app = DianStarApp(Conversation.create(Path(temporary)))
+            with patch("dianstar.tui.ask_deepseek", new_callable=AsyncMock) as ask:
+                async with app.run_test() as pilot:
+                    app.copy_to_clipboard("第一段\n第二段")
+                    await pilot.press("ctrl+v")
+                    self.assertEqual(app.query_one("#input", ChatInput).text, "第一段\n第二段")
+                    ask.assert_not_awaited()
+
+    async def test_submit_while_busy_keeps_the_multiline_draft(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            app = DianStarApp(Conversation.create(Path(temporary)))
+            with patch("dianstar.tui.ask_deepseek", new_callable=AsyncMock) as ask:
+                async with app.run_test() as pilot:
+                    app.busy = True
+                    app.post_message(Paste("下一条问题\n补充说明"))
+                    await pilot.pause()
+                    await pilot.press("enter")
+                    self.assertEqual(app.query_one("#input", ChatInput).text, "下一条问题\n补充说明")
+                    ask.assert_not_awaited()
+
+    async def test_multiline_slash_text_is_a_message_not_a_command(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            conversation = Conversation.create(Path(temporary))
+            app = DianStarApp(conversation)
+            message = "/new\n这是要讨论的文本"
+            with patch("dianstar.tui.ask_deepseek", new_callable=AsyncMock,
+                       return_value="已分析文本。") as ask:
+                async with app.run_test() as pilot:
+                    field = app.query_one("#input", ChatInput)
+                    app.post_message(Paste(message))
+                    await pilot.pause()
+                    await pilot.press("tab")
+                    self.assertEqual(field.text, message)
+                    await pilot.press("enter")
+                    await app.workers.wait_for_complete()
+                    self.assertEqual(app.conversation.id, conversation.id)
+                    self.assertEqual(ask.await_args.args, (message,))
+
+    async def test_long_paste_keeps_chat_visible_and_can_be_edited(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            app = DianStarApp(Conversation.create(Path(temporary)))
+            async with app.run_test(size=(80, 24)) as pilot:
+                field = app.query_one("#input", ChatInput)
+                app.post_message(Paste("\n".join(f"第{i}行" for i in range(30))))
+                await pilot.pause()
+                self.assertLessEqual(field.size.height, 6)
+                self.assertGreater(app.query_one("#chat", RichLog).size.height, 0)
+                await pilot.press("backspace", "x")
+                self.assertTrue(field.text.endswith("第29x"))
+
     async def test_welcome_flower_stays_separate_from_rabbit(self):
         rabbit = rabbit_lines(80, 12)
         art = welcome_art_lines(80, 20)
@@ -90,7 +175,7 @@ class TuiTests(unittest.IsolatedAsyncioTestCase):
 
             with patch("dianstar.tui.ask_deepseek", side_effect=answer_later):
                 async with app.run_test() as pilot:
-                    app.query_one("#input", Input).value = "测试流式输出"
+                    app.query_one("#input", ChatInput).text = "测试流式输出"
                     await pilot.press("enter")
                     await pilot.pause()
                     live = app.query_one("#stream", Static)
@@ -126,7 +211,7 @@ class TuiTests(unittest.IsolatedAsyncioTestCase):
                 self.assertTrue(sidebar.display)
                 await pilot.press("ctrl+l")
                 self.assertFalse(sidebar.display)
-                app.query_one("#input", Input).value = "/switch"
+                app.query_one("#input", ChatInput).text = "/switch"
                 await pilot.press("enter")
                 self.assertTrue(sidebar.display)
 
@@ -135,8 +220,8 @@ class TuiTests(unittest.IsolatedAsyncioTestCase):
             app = DianStarApp(Conversation.create(Path(temporary)))
             async with app.run_test() as pilot:
                 await pilot.press("/", "s", "w", "tab")
-                self.assertEqual(app.query_one("#input", Input).value, "/switch")
-                app.query_one("#input", Input).value = "/help"
+                self.assertEqual(app.query_one("#input", ChatInput).text, "/switch")
+                app.query_one("#input", ChatInput).text = "/help"
                 await pilot.press("enter")
                 await pilot.pause()
                 self.assertIn("/help", str(app.query_one("#chat", RichLog).lines))
@@ -149,7 +234,7 @@ class TuiTests(unittest.IsolatedAsyncioTestCase):
             current = Conversation.create(directory)
             app = DianStarApp(current)
             async with app.run_test() as pilot:
-                app.query_one("#input", Input).value = "/switch"
+                app.query_one("#input", ChatInput).text = "/switch"
                 await pilot.press("enter")
                 await pilot.press("down", "enter")
                 await pilot.pause()
