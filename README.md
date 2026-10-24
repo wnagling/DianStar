@@ -68,7 +68,15 @@ powershell.exe -NoProfile -ExecutionPolicy Bypass -File .\scripts\build_windows.
 
 安装项目后，也可以在任意终端输入 `DS` 启动 DianStar TUI。Windows 命令名不区分大小写；该命令需要安装项目所用 Python 的 `Scripts` 目录位于 PATH。若使用项目 `.venv`，请先激活虚拟环境再输入 `DS`。
 
-聊天输入框支持多行粘贴，保留换行、空行和缩进；粘贴不会自动发送。按 Enter 发送整段内容，Shift+Enter 或 Ctrl+J 插入换行。输入框最多显示 6 行，更长的内容可滚动编辑。只有单行输入会识别为斜杆命令，多行内容中的 `/new` 等文字按普通消息发送。`--plain` 仍使用原有单行输入方式。
+聊天记录的选择和复制：
+
+- 左键拖选文字，双击只选中当前显示行；右键双击／三击不会触发全选。选区显示为白字蓝底，保留 Markdown 样式。
+- 选中后按 Ctrl+C，或在 Windows 上右键打开鼠标旁的深灰色菜单。菜单只显示复制图标和“复制”，不切换页面，不额外显示 PowerShell 任务栏图标。点击外部关闭时清除选区，按 Esc 关闭时保留选区；未选中文字时右键不弹窗、不提示。
+- 复制的是显示出的文本。Windows 直接写入系统剪贴板，成功时不提示，仅失败时提示；其他系统沿用 Textual 的终端剪贴板协议和菜单浮层。终端拦截鼠标操作时，可尝试 Shift 拖选及终端自身的复制功能。
+
+菜单会在程序启动后后台预热，后续复用同一进程，减少右键等待；刚启动就操作仍可能等待首次初始化。Windows 原生菜单需要系统自带的 Windows PowerShell 和 .NET Framework。菜单组件的内部实现不会向模型开放命令执行能力。修改源码或菜单资源后，重新启动 DS 生效；已有便携包需要重新构建。
+
+聊天输入框中，左键双击和 Ctrl+A 都只全选输入框文字，不选择聊天记录；选中后输入会替换草稿。聊天输入框支持多行粘贴，保留换行、空行和缩进；粘贴不会自动发送。按 Enter 发送整段内容，Shift+Enter 或 Ctrl+J 插入换行。输入框最多显示 6 行，更长的内容可滚动编辑。只有单行输入会识别为斜杆命令，多行内容中的 `/new` 等文字按普通消息发送。`--plain` 仍使用原有单行输入方式。
 
 连续对话启动后会显示当前会话，输入普通文字即可提问。左侧列表默认收起；点击顶部“显示会话／收起会话”按钮或按 Ctrl+L，可展开或收起。`/switch` 会展开列表并将焦点移过去，用 ↑/↓ 选择，按 Enter 恢复并显示旧聊天记录。Ctrl+B 默认打开模型切换器，可用 ↑/↓ 和 Enter 选择模型；底栏显示当前模型，不显示模型切换快捷键。输入 `/` 可查看候选，按 Tab 补全命令。右下角显示当前会话名。在项目根目录双击 `start_dianstar.cmd`，可在独立的 PowerShell 窗口打开界面；脚本优先使用 `.venv`，否则使用 PowerShell 中已安装依赖的 `python`。程序退出或启动失败后窗口会保留，方便查看错误。
 
@@ -129,6 +137,8 @@ powershell.exe -NoProfile -ExecutionPolicy Bypass -File .\scripts\build_windows.
 | `dianstar/welcome_art.py`、`dianstar/assets/kapok.json`、`dianstar/assets/kapok-source.png` | 从参考图生成木棉花点阵，绘制在兔子后层并保护兔子轮廓 |
 | `scripts/build_flower_art.py` | 从原有裁剪范围生成花朵基础点阵，并用手绘点阵补足右下花瓣；仅更新素材时使用，需 Pillow |
 | `start_dianstar.cmd`、`start_dianstar.ps1` | 在独立 PowerShell 窗口启动应用并保留错误信息 |
+| `dianstar/context_menu.py`、`dianstar/assets/copy_menu.ps1` | Windows 右键菜单、后台预热、进程复用与关闭处理 |
+| `dianstar/clipboard.py` | Windows 系统剪贴板写入；文字通过标准输入传递 |
 | `dianstar/conversations.py` | 会话名称和 ID、JSON 持久化、恢复及上下文起点 |
 | `dianstar/agent.py` | 一轮任务的编排、工具分派与回答保存 |
 | `dianstar/prompts.py` | 加载固定规则，并在每轮提问注入当天日期 |
@@ -144,7 +154,8 @@ powershell.exe -NoProfile -ExecutionPolicy Bypass -File .\scripts\build_windows.
 | `dianstar/tools/date_calculator.py` | 日期工具定义、星期、按天加减、日期差、时区日期与结构化错误 |
 | `tests/test_deepseek.py` | 问答、会话和模型工具调用的离线测试 |
 | `tests/test_cli.py` | 终端 Markdown 回答展示测试 |
-| `tests/test_tui.py` | 终端界面的补全、切换会话和问答保存测试 |
+| `tests/test_tui.py` | 聊天行选择、输入栏全选、多行粘贴、复制、会话切换和问答保存测试 |
+| `tests/test_clipboard.py` | 系统剪贴板、菜单进程复用、协议、取消和初始化失败恢复测试 |
 | `tests/test_config.py` | 模型配置、Key 保存和配置界面的测试 |
 | `tests/test_conversations.py` | 会话名称、旧格式兼容和时间排序测试 |
 | `tests/test_loop.py` | 循环停止规则测试 |
@@ -157,6 +168,7 @@ powershell.exe -NoProfile -ExecutionPolicy Bypass -File .\scripts\build_windows.
 | `scripts/build_rabbit_art.py` | 从原图重新生成兔子像素数据；仅更新素材时使用，需 Pillow |
 | `docs/架构.md` | 当前模块边界、任务流程和数据权限说明 |
 | `docs/测试记录-2026-10-20.md` | 离线、真实问答和 100 城市天气查询的测试结果与边界 |
+| `docs/测试记录-2026-10-25-表达与复制.md` | 简洁表达、聊天选择、Windows 菜单、输入栏全选及性能验证记录 |
 | `docs/测试记录-2026-10-24-Prompt.md` | 真实模型的初步 Prompt 验收、表达复测及地点解析风险 |
 | `docs/测试记录-2026-10-24-数字工具.md` | 数字工具实现与验收记录 |
 | `docs/测试记录-2026-10-24-日期工具.md` | 日期工具实现、离线边界与真实模型调用验收 |

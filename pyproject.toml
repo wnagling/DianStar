@@ -24,4 +24,4 @@ ds = "dianstar.__main__:main"
 include = ["dianstar*"]
 
 [tool.setuptools.package-data]
-dianstar = ["system_prompt.md", "assets/rabbit.json", "assets/rabbit-source.png", "assets/kapok.json", "assets/kapok-source.png"]
+dianstar = ["system_prompt.md", "assets/rabbit.json", "assets/rabbit-source.png", "assets/kapok.json", "assets/kapok-source.png", "assets/copy_menu.ps1"]

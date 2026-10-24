@@ -7,16 +7,230 @@ from pathlib import Path
 from unittest.mock import AsyncMock, patch
 
 from textual.containers import Vertical
-from textual.events import Paste
+from textual.events import Click, Paste
+from textual.geometry import Offset
+from textual.selection import Selection
 from textual.widgets import Button, Label, RichLog, Static
 
 from dianstar.conversations import Conversation
 from dianstar.rabbit_art import rabbit_lines
-from dianstar.tui import ChatInput, DianStarApp
+from dianstar.tui import ChatInput, ChatLog, CopyMenu, DianStarApp
 from dianstar.welcome_art import welcome_art_lines
 
 
 class TuiTests(unittest.IsolatedAsyncioTestCase):
+    async def test_input_double_click_and_ctrl_a_select_only_multiline_draft(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            conversation = Conversation.create(Path(temporary))
+            conversation.messages = [{"role": "user", "content": "聊天记录不应被选中"}]
+            app = DianStarApp(conversation)
+            async with app.run_test() as pilot:
+                await pilot.pause()
+                field = app.query_one("#input", ChatInput)
+                draft = "第一行草稿\n第二行 hello"
+                field.text = draft
+                await pilot.pause()
+                await pilot.double_click(field, offset=(3, 0))
+                self.assertEqual(field.selected_text, draft)
+                self.assertEqual(app.screen.selections, {})
+                await pilot.press("ctrl+c")
+                self.assertEqual(app.clipboard, draft)
+                await pilot.press("right")
+                chat = app.query_one("#chat", ChatLog)
+                app.screen.selections = {chat: Selection(Offset(0, 1), Offset(2, 1))}
+                await pilot.press("ctrl+a")
+                self.assertEqual(field.selected_text, draft)
+                self.assertEqual(app.screen.selections, {})
+                await pilot.press("x")
+                self.assertEqual(field.text, "x")
+                self.assertEqual(conversation.messages[0]["content"], "聊天记录不应被选中")
+
+    async def test_left_double_click_selects_only_clicked_display_line(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            conversation = Conversation.create(Path(temporary))
+            conversation.messages = [{"role": "user", "content": "第一行\n中文第二行 0.3\n第三行"}]
+            app = DianStarApp(conversation)
+            async with app.run_test(size=(80, 24)) as pilot:
+                await pilot.pause()
+                chat = app.query_one("#chat", ChatLog)
+                await pilot.double_click(chat, offset=(4, 3))
+                self.assertEqual(app.screen.get_selected_text(), "中文第二行 0.3")
+                await pilot.press("ctrl+c")
+                self.assertEqual(app.clipboard, "中文第二行 0.3")
+                await pilot.triple_click(chat, offset=(4, 3))
+                self.assertEqual(app.screen.get_selected_text(), "中文第二行 0.3")
+
+    async def test_double_click_selects_correct_row_after_scroll(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            conversation = Conversation.create(Path(temporary))
+            conversation.messages = [{"role": "user", "content": "\n".join(
+                f"第{index}行 中文" for index in range(60))}]
+            app = DianStarApp(conversation)
+            async with app.run_test(size=(80, 24)) as pilot:
+                await pilot.pause()
+                chat = app.query_one("#chat", ChatLog)
+                chat.scroll_to(y=20, animate=False, immediate=True)
+                await pilot.pause()
+                row = chat.scroll_offset.y + 1
+                await pilot.double_click(chat, offset=(4, 2))
+                self.assertEqual(app.screen.get_selected_text(), chat.lines[row].text.rstrip())
+
+    async def test_right_double_and_triple_click_never_expand_selection(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            conversation = Conversation.create(Path(temporary))
+            conversation.messages = [{"role": "user", "content": "只复制这几个字，其他不要"}]
+            app = DianStarApp(conversation)
+            async with app.run_test() as pilot:
+                await pilot.pause()
+                chat = app.query_one("#chat", ChatLog)
+                original = {chat: Selection(Offset(0, 1), Offset(4, 1))}
+                app.screen.selections = original.copy()
+                for chain in (2, 3):
+                    app.screen._forward_event(Click(
+                        chat, chat.region.x + 3, chat.region.y + 2, 0, 0, 3,
+                        False, False, False, screen_x=chat.region.x + 3,
+                        screen_y=chat.region.y + 2, chain=chain))
+                    await pilot.pause()
+                    self.assertEqual(app.screen.selections, original)
+                    self.assertEqual(app.screen.get_selected_text(), "只复制这")
+                app.screen.clear_selection()
+                app.screen._forward_event(Click(chat, 3, 2, 0, 0, 3, False, False, False, chain=2))
+                await pilot.pause()
+                self.assertEqual(app.screen.selections, {})
+
+    async def test_left_click_clears_old_selection_and_new_drag_still_selects(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            conversation = Conversation.create(Path(temporary))
+            conversation.messages = [{"role": "user", "content": "中文答案 0.3"}]
+            app = DianStarApp(conversation)
+            async with app.run_test() as pilot:
+                await pilot.pause()
+                chat = app.query_one("#chat", ChatLog)
+                app.screen.selections = {chat: Selection(Offset(0, 1), Offset(4, 1))}
+                await pilot.click("#input")
+                self.assertEqual(app.screen.selections, {})
+                await pilot.mouse_down(chat, offset=(2, 2))
+                await pilot.hover(chat, offset=(8, 2))
+                await pilot.mouse_up(chat, offset=(8, 2))
+                self.assertEqual(app.screen.get_selected_text(), "中文答案")
+                await pilot.click(chat, offset=(30, 5))
+                self.assertEqual(app.screen.selections, {})
+
+    async def test_mouse_selection_copies_chinese_and_markdown_answer(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            conversation = Conversation.create(Path(temporary))
+            conversation.messages = [{"role": "user", "content": "中文答案 0.3\n第二行"}]
+            app = DianStarApp(conversation)
+            async with app.run_test(size=(80, 24)) as pilot:
+                await pilot.pause()
+                chat = app.query_one("#chat", ChatLog)
+                await pilot.mouse_down(chat, offset=(2, 2))
+                await pilot.hover(chat, offset=(8, 2))
+                await pilot.mouse_up(chat, offset=(8, 2))
+                await pilot.pause()
+                self.assertEqual(app.screen.get_selected_text(), "中文答案")
+                highlighted = [segment for segment in chat.render_line(1)
+                               if segment.style and segment.style.bgcolor
+                               and segment.style.bgcolor.name == "#245b85"]
+                self.assertTrue(highlighted)
+                self.assertTrue(all(segment.style.color.name == "#ffffff" for segment in highlighted))
+                self.assertEqual("".join(segment.text for segment in highlighted), "中文答案")
+                await pilot.press("ctrl+c")
+                self.assertEqual(app.clipboard, "中文答案")
+                original_selection = dict(app.screen.selections)
+                original_state = app.screen._select_state
+                await pilot.mouse_down(chat, offset=(8, 2), button=3)
+                await pilot.mouse_up(chat, offset=(8, 2))
+                await pilot.pause()
+                menu = app.query_one("#copy-menu", CopyMenu)
+                self.assertTrue(menu.display)
+                self.assertEqual(app.screen.selections, original_selection)
+                self.assertIs(app.screen._select_state, original_state)
+                self.assertEqual(len(app.screen_stack), 1)
+                self.assertEqual(menu.region.width, 12)
+                self.assertEqual(menu.region.height, 3)
+                self.assertEqual(menu.region.x, chat.region.x + 8)
+                self.assertEqual(menu.region.y, chat.region.y + 3)
+                self.assertEqual(str(menu.query_one(Button).label), "复制")
+                app.copy_to_clipboard("旧内容")
+                await pilot.click("#copy-selection")
+                await pilot.pause()
+                self.assertFalse(menu.display)
+                self.assertEqual(app.clipboard, "中文答案")
+                # 拖选聊天记录不能修改仍在输入的草稿。
+                self.assertEqual(app.query_one("#input", ChatInput).text, "")
+                app.screen.selections = {chat: Selection(Offset(0, 1), Offset(3, 2))}
+                await pilot.press("ctrl+c")
+                self.assertEqual(app.clipboard, "中文答案 0.3\n第二行")
+                chat.clear()
+                self.assertIsNone(app.screen.get_selected_text())
+
+    async def test_right_click_without_selection_and_cancel_do_not_copy(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            app = DianStarApp(Conversation.create(Path(temporary)))
+            async with app.run_test() as pilot:
+                await pilot.pause()
+                app.copy_to_clipboard("原有剪贴板")
+                chat = app.query_one("#chat", ChatLog)
+                await pilot.mouse_down(chat, offset=(3, 2), button=3)
+                await pilot.mouse_up(chat, offset=(3, 2))
+                await pilot.pause()
+                menu = app.query_one("#copy-menu", CopyMenu)
+                self.assertFalse(menu.display)
+                with patch.object(app, "_status") as status:
+                    app.on_chat_log_copy_requested(ChatLog.CopyRequested(""))
+                    status.assert_not_called()
+                app.on_chat_log_copy_requested(ChatLog.CopyRequested("待复制文本"))
+                await pilot.pause()
+                self.assertTrue(menu.display)
+                await pilot.press("escape")
+                self.assertFalse(menu.display)
+                self.assertEqual(app.clipboard, "原有剪贴板")
+
+    async def test_context_menu_stays_in_window_and_outside_click_closes_it(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            conversation = Conversation.create(Path(temporary))
+            conversation.messages = [{"role": "user", "content": "测试菜单位置"}]
+            app = DianStarApp(conversation)
+            async with app.run_test(size=(60, 20)) as pilot:
+                await pilot.pause()
+                original_screen = app.screen
+                app.copy_to_clipboard("原有剪贴板")
+                app.on_chat_log_copy_requested(ChatLog.CopyRequested("待复制", Offset(59, 19)))
+                await pilot.pause()
+                menu = app.query_one("#copy-menu", CopyMenu)
+                self.assertIs(app.screen, original_screen)
+                self.assertEqual(menu.region.right, 60)
+                self.assertEqual(menu.region.bottom, 20)
+                self.assertEqual(menu.styles.background, original_screen.styles.background)
+                await pilot.click("#input")
+                self.assertFalse(menu.display)
+                self.assertIs(app.focused, app.query_one("#input", ChatInput))
+                self.assertEqual(app.clipboard, "原有剪贴板")
+
+    async def test_selection_tracks_scrolled_rows_and_preserves_markdown_style(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            conversation = Conversation.create(Path(temporary))
+            conversation.messages = [{"role": "assistant", "content": "\n\n".join(
+                f"**第{index}行** 结果" for index in range(50))}]
+            app = DianStarApp(conversation)
+            async with app.run_test(size=(80, 24)) as pilot:
+                await pilot.pause()
+                chat = app.query_one("#chat", ChatLog)
+                target = next(index for index, line in enumerate(chat.lines)
+                              if index >= 20 and any(segment.style and segment.style.bold for segment in line))
+                chat.scroll_to(y=target, animate=False, immediate=True)
+                await pilot.pause()
+                self.assertGreater(chat.scroll_offset.y, 0)
+                row = chat.scroll_offset.y
+                app.screen.selections = {chat: Selection(Offset(0, row), Offset(2, row))}
+                line = chat.render_line(0)
+                self.assertTrue(any(segment.style and segment.style.bold for segment in line))
+                self.assertTrue(any(segment.style and segment.style.meta.get("offset", (0, -1))[1] == row
+                                    for segment in line))
+                await pilot.press("ctrl+c")
+                self.assertEqual(app.clipboard, chat.lines[row].text[:2])
+
     async def test_multiline_paste_is_not_sent_until_enter_and_is_saved_intact(self):
         with tempfile.TemporaryDirectory() as temporary:
             conversation = Conversation.create(Path(temporary))

@@ -2,19 +2,28 @@
 
 from __future__ import annotations
 
+import os
+import subprocess
 from openai import APIConnectionError, APIStatusError, APITimeoutError, OpenAIError
 from textual.actions import SkipAction
 from rich.console import Group
 from rich.markdown import Markdown
 from rich.text import Text
+from rich.style import Style
 from textual.app import App, ComposeResult
 from textual.binding import Binding
 from textual.containers import Horizontal, Vertical
-from textual.events import Resize
+from textual.events import Click, MouseDown, MouseUp, Resize
+from textual.geometry import Offset
 from textual.message import Message
+from textual.selection import Selection
+from textual.screen import ModalScreen, Screen
+from textual.strip import Strip
 from textual.widgets import Button, Label, ListItem, ListView, RichLog, Static, TextArea
 
 from .agent import ask_deepseek
+from .clipboard import copy_windows_text
+from .context_menu import WindowsCopyMenuClient, cursor_position
 from .config import CONFIG_FILE, ENV_FILE, load_model_settings
 from .config_ui import ConfigScreen
 from .conversations import Conversation, list_conversations
@@ -33,10 +42,111 @@ COMMANDS = {
 }
 
 
+class ChatLog(RichLog):
+    """为富文本聊天记录提供字符坐标、选区高亮和文本提取。"""
+
+    class CopyRequested(Message):
+        def __init__(self, text: str, position: Offset = Offset(0, 0)) -> None:
+            super().__init__()
+            self.text = text
+            self.position = position
+
+    def get_selection(self, selection: Selection) -> tuple[str, str] | None:
+        if not self.lines or (selection.start is not None and selection.start.y >= len(self.lines)):
+            return None
+        return selection.extract("\n".join(line.text.rstrip(" ") for line in self.lines)), "\n"
+
+    def render_line(self, y: int) -> Strip:
+        scroll_x, scroll_y = self.scroll_offset
+        row = scroll_y + y
+        width = self.scrollable_content_region.width
+        if row >= len(self.lines):
+            return Strip.blank(width, self.rich_style)
+        line = self.lines[row]
+        selection = self.text_selection
+        if selection is not None and (span := selection.get_span(row)) is not None:
+            text = Text.assemble(*((segment.text, segment.style or "") for segment in line))
+            start, end = span
+            text.stylize(Style(color="#ffffff", bgcolor="#245b85"),
+                         start, len(text) if end == -1 else end)
+            line = Strip(text.render(self.app.console))
+        # 在裁剪前附加字符坐标，保持中文宽字符和横向滚动后的选区准确。
+        return (line.apply_offsets(0, row)
+                .crop_extend(scroll_x, scroll_x + width, self.rich_style)
+                .apply_style(self.rich_style))
+
+    def clear(self):
+        if self.is_attached:
+            self.screen.selections = {widget: selection for widget, selection
+                                      in self.screen.selections.items() if widget is not self}
+        return super().clear()
+
+
+class CopyMenu(Vertical):
+    """留在聊天页面、定位到鼠标旁的轻量菜单。"""
+
+    DEFAULT_CSS = """
+    CopyMenu { display: none; position: absolute; overlay: screen; layer: context-menu;
+               width: 12; height: 3; padding: 0; margin: 0;
+               border: solid $foreground 15%; background: $surface; }
+    CopyMenu Button { width: 100%; min-width: 0; height: 1; margin: 0; padding: 0 1;
+                      border: none; background: $surface; color: $text; text-style: none; }
+    CopyMenu Button:hover, CopyMenu Button:focus { background: $boost; text-style: none; }
+    CopyMenu Button.-active { background: $boost; }
+    """
+    BINDINGS = [Binding("escape", "cancel", "取消", show=False)]
+
+    class Closed(Message):
+        pass
+
+    def compose(self) -> ComposeResult:
+        yield Button("复制", id="copy-selection", compact=True)
+
+    def action_cancel(self) -> None:
+        self.post_message(self.Closed())
+
+
+class ChatScreen(Screen):
+    """只允许左键驱动 Textual 选区，右键在屏幕选择逻辑之前处理。"""
+
+    def _forward_event(self, event) -> None:
+        if isinstance(event, Click) and event.button == 1 and event.chain >= 2:
+            target, _ = self.get_widget_at(event.screen_x, event.screen_y)
+            if isinstance(target, ChatInput):
+                target.action_select_all()
+                return
+            chat = self.query_one("#chat", ChatLog)
+            widget, offset = self.get_widget_and_offset_at(event.screen_x, event.screen_y)
+            if widget is chat and chat.content_region.contains(event.screen_x, event.screen_y):
+                row = (offset.y if offset is not None else
+                       int(event.screen_y - chat.content_region.y + chat.scroll_offset.y))
+                self.clear_selection()
+                if 0 <= row < len(chat.lines):
+                    text = chat.lines[row].text.rstrip(" ")
+                    if text:
+                        self.selections = {chat: Selection(Offset(0, row), Offset(len(text), row))}
+                return
+        if isinstance(event, MouseDown) and event.button == 1:
+            self.clear_selection()
+        if isinstance(event, MouseDown) and event.button == 3:
+            chat = self.query_one("#chat", ChatLog)
+            if chat.region.contains(event.screen_x, event.screen_y):
+                selection = self.selections.get(chat)
+                selected = chat.get_selection(selection) if selection is not None else None
+                chat.post_message(ChatLog.CopyRequested(selected[0] if selected else "", event.screen_offset))
+                return
+        # Textual 8.2 的屏幕转发会用任意按键重新开始选择；Widget.stop 已经太晚。
+        if isinstance(event, (MouseDown, MouseUp, Click)) and event.button != 1:
+            return
+        super()._forward_event(event)
+
+
 class ChatInput(TextArea):
     """保留粘贴文本的换行，只有明确按下发送键才提交。"""
 
+    ALLOW_SELECT = False  # 使用编辑器内部选区，避免页面级全选。
     BINDINGS = [
+        Binding("ctrl+a", "select_all", "全选输入", priority=True, show=False),
         Binding("enter", "submit", "发送", priority=True, show=False),
         Binding("shift+enter,ctrl+j", "insert_newline", "换行", priority=True, show=False),
     ]
@@ -49,6 +159,10 @@ class ChatInput(TextArea):
     def action_submit(self) -> None:
         self.post_message(self.Submitted(self.text))
 
+    def action_select_all(self) -> None:
+        self.screen.clear_selection()
+        super().action_select_all()
+
     def action_insert_newline(self) -> None:
         result = self.replace("\n", *self.selection, maintain_selection_offset=False)
         self.move_cursor(result.end_location)
@@ -59,7 +173,7 @@ class DianStarApp(App[None]):
 
     TITLE = "DianStar"
     CSS = """
-    Screen { layout: vertical; background: $surface; }
+    Screen { layout: vertical; background: $surface; layers: base context-menu; }
     #toolbar { height: 1; padding: 0 1; }
     #toggle-sessions { height: 1; width: auto; min-width: 12; border: none; padding: 0 1; }
     #body { height: 1fr; }
@@ -91,6 +205,82 @@ class DianStarApp(App[None]):
         self.busy = False
         self._welcome_only = False
         self._installed_model_shortcut: str | None = None
+        self._copy_menu_text = ""
+        self._copy_menu_focus = None
+        self._native_copy_menu_open = False
+        self._native_menu = WindowsCopyMenuClient()
+
+    def get_default_screen(self) -> Screen:
+        return ChatScreen(id="_default")
+
+    def copy_to_clipboard(self, text: str) -> None:
+        if os.name != "nt" or self.is_headless:
+            super().copy_to_clipboard(text)
+            return
+        try:
+            copy_windows_text(text)
+        except (OSError, subprocess.SubprocessError):
+            self._status("复制失败：系统剪贴板暂不可用，请重试。")
+            return
+        self._clipboard = text
+
+    def on_chat_log_copy_requested(self, event: ChatLog.CopyRequested) -> None:
+        event.stop()
+        if not event.text:
+            return
+        if os.name == "nt" and not self.is_headless:
+            if not self._native_copy_menu_open:
+                try:
+                    position = cursor_position()
+                except OSError:
+                    self._status("无法打开系统菜单，请使用 Ctrl+C 复制。")
+                    return
+                self._native_copy_menu_open = True
+                self.run_worker(self._show_native_copy_menu(event.text, position))
+            return
+        menu = self.query_one("#copy-menu", CopyMenu)
+        self._copy_menu_text = event.text
+        if not menu.display:
+            self._copy_menu_focus = self.focused
+        menu.styles.offset = (
+            max(0, min(event.position.x, self.screen.size.width - 12)),
+            max(0, min(event.position.y + 1, self.screen.size.height - 3)),
+        )
+        menu.display = True
+        menu.query_one(Button).focus(scroll_visible=False)
+
+    async def _show_native_copy_menu(self, text: str, position: tuple[int, int]) -> None:
+        screen = self.screen
+        original_selection = dict(screen.selections)
+        try:
+            choice = await self._native_menu.show(position)
+            if choice == "copy":
+                self.copy_to_clipboard(text)
+            elif choice == "outside" and screen.is_attached and screen.selections == original_selection:
+                screen.clear_selection()
+        except (OSError, subprocess.SubprocessError, ValueError, TimeoutError):
+            self._status("系统菜单暂不可用，请使用 Ctrl+C 复制。")
+        finally:
+            self._native_copy_menu_open = False
+
+    def _close_copy_menu(self, *, restore_focus: bool = True) -> None:
+        menu = self.query_one("#copy-menu", CopyMenu)
+        if not menu.display:
+            return
+        menu.display = False
+        self._copy_menu_text = ""
+        if restore_focus and self._copy_menu_focus is not None and self._copy_menu_focus.is_attached:
+            self._copy_menu_focus.focus(scroll_visible=False)
+        self._copy_menu_focus = None
+
+    def on_copy_menu_closed(self, event: CopyMenu.Closed) -> None:
+        event.stop()
+        self._close_copy_menu()
+
+    def on_mouse_down(self, event: MouseDown) -> None:
+        menu = self.query_one("#copy-menu", CopyMenu)
+        if menu.display and not menu.region.contains(event.screen_x, event.screen_y):
+            self._close_copy_menu(restore_focus=False)
 
     def compose(self) -> ComposeResult:
         with Horizontal(id="toolbar"):
@@ -100,7 +290,7 @@ class DianStarApp(App[None]):
                 yield Static("会话 · 最近使用", id="sessions-title")
                 yield ListView(id="session-list")
             with Vertical(id="chat-pane"):
-                yield RichLog(id="chat", wrap=True, markup=False, auto_scroll=True)
+                yield ChatLog(id="chat", wrap=True, markup=False, auto_scroll=True)
                 thinking = RichLog(id="thinking", wrap=True, markup=False, auto_scroll=True)
                 thinking.border_title = "模型思考"
                 yield thinking
@@ -112,20 +302,36 @@ class DianStarApp(App[None]):
                 with Horizontal(id="bottom"):
                     yield Static("", id="key-help")
                     yield Label("", id="session-name")
+        yield CopyMenu(id="copy-menu")
 
     async def on_mount(self) -> None:
+        if os.name == "nt" and not self.is_headless:
+            self.run_worker(self._warm_copy_menu())
         self._install_model_shortcut()
         self._refresh_key_help()
         await self._refresh_sessions()
         self._render_history()
-        self.call_after_refresh(self._render_history)
+        if self._welcome_only:
+            self.call_after_refresh(self._render_history)
         self.query_one("#input", ChatInput).focus()
 
+    async def _warm_copy_menu(self) -> None:
+        try:
+            await self._native_menu.start()
+        except (OSError, subprocess.SubprocessError, ValueError, TimeoutError):
+            pass
+
+    async def on_unmount(self) -> None:
+        await self._native_menu.close()
+
     def on_resize(self, event: Resize) -> None:
+        if self.is_mounted:
+            self._close_copy_menu()
         if self._welcome_only:
             self.call_after_refresh(self._render_history)
 
     def _render_history(self) -> None:
+        self._close_copy_menu()
         chat = self.query_one("#chat", RichLog)
         chat.clear()
         if self.conversation.messages:
@@ -182,8 +388,9 @@ class DianStarApp(App[None]):
             self.query_one("#input", ChatInput).focus()
 
     def action_toggle_sessions(self) -> None:
-        if isinstance(self.screen, ConfigScreen):
+        if isinstance(self.screen, ModalScreen):
             raise SkipAction()
+        self._close_copy_menu()
         sidebar = self.query_one("#sessions", Vertical)
         self._set_sessions_visible(not sidebar.display)
 
@@ -211,8 +418,9 @@ class DianStarApp(App[None]):
         self.refresh_bindings()
 
     def action_open_model_switcher(self) -> None:
-        if isinstance(self.screen, ConfigScreen):
+        if isinstance(self.screen, ModalScreen):
             raise SkipAction()
+        self._close_copy_menu()
         if self.busy:
             return
         try:
@@ -229,7 +437,12 @@ class DianStarApp(App[None]):
         self.query_one("#input", ChatInput).focus()
 
     def on_button_pressed(self, event: Button.Pressed) -> None:
-        if event.button.id == "toggle-sessions":
+        if event.button.id == "copy-selection":
+            text = self._copy_menu_text
+            self._close_copy_menu()
+            if text:
+                self.copy_to_clipboard(text)
+        elif event.button.id == "toggle-sessions":
             self.action_toggle_sessions()
             self.query_one("#input", ChatInput).focus()
 
@@ -272,6 +485,8 @@ class DianStarApp(App[None]):
             self.query_one("#hints", Static).update("")
 
     def action_complete_command(self) -> None:
+        if isinstance(self.screen, ModalScreen) or self.query_one("#copy-menu", CopyMenu).display:
+            raise SkipAction()
         field = self.query_one("#input", ChatInput)
         value = field.text
         if not value.startswith("/") or any(char.isspace() for char in value):
