@@ -2,12 +2,13 @@
 
 from __future__ import annotations
 
+import asyncio
 import os
 import subprocess
+import webbrowser
 from openai import APIConnectionError, APIStatusError, APITimeoutError, OpenAIError
 from textual.actions import SkipAction
 from rich.console import Group
-from rich.markdown import Markdown
 from rich.text import Text
 from rich.style import Style
 from rich.panel import Panel
@@ -23,12 +24,16 @@ from textual.strip import Strip
 from textual.widgets import Button, Label, ListItem, ListView, RichLog, Static, TextArea
 
 from .agent import ask_deepseek
+from .permission_approval import PermissionApproval
+from .chat_rendering import ChatMarkdown, StreamLines, is_web_link
 from .clipboard import copy_windows_text
 from .context_menu import WindowsCopyMenuClient, cursor_position
-from .config import CONFIG_FILE, ENV_FILE, load_model_settings
+from .config import CONFIG_FILE, ENV_FILE, cycle_model, load_model_settings
 from .config_ui import ConfigScreen
 from .conversations import Conversation, list_conversations
 from .welcome_art import welcome_art_lines
+from .web_approval import PaidWebApproval
+from .search_config import load_search_settings, save_search_settings
 
 
 COMMANDS = {
@@ -51,6 +56,11 @@ class ChatLog(RichLog):
             super().__init__()
             self.text = text
             self.position = position
+
+    class LinkRequested(Message):
+        def __init__(self, url: str) -> None:
+            super().__init__()
+            self.url = url
 
     def get_selection(self, selection: Selection) -> tuple[str, str] | None:
         if not self.lines or (selection.start is not None and selection.start.y >= len(self.lines)):
@@ -82,12 +92,17 @@ class ChatLog(RichLog):
                                       in self.screen.selections.items() if widget is not self}
         return super().clear()
 
-    def replace_tail(self, start: int, renderable) -> None:
-        follow = self.is_vertical_scroll_end
-        self.lines = self.lines[:start]
+    def truncate_tail(self, start: int) -> None:
+        del self.lines[start:]
         self._line_cache.clear()
         self.virtual_size = Size(self.virtual_size.width, len(self.lines))
+        self.refresh()
+
+    def replace_tail(self, start: int, renderable) -> None:
+        follow = self.is_vertical_scroll_end
+        self.truncate_tail(start)
         self.write(renderable, width=max(1, self.scrollable_content_region.width), scroll_end=follow)
+        self.refresh()
 
 
 class CopyMenu(Vertical):
@@ -118,6 +133,14 @@ class ChatScreen(Screen):
     """只允许左键驱动 Textual 选区，右键在屏幕选择逻辑之前处理。"""
 
     def _forward_event(self, event) -> None:
+        if isinstance(event, Click) and event.button == 1 and event.chain == 1:
+            target, _ = self.get_widget_at(event.screen_x, event.screen_y)
+            if isinstance(target, ChatLog):
+                selected = target.get_selection(target.text_selection) if target.text_selection else None
+                url = self.get_style_at(event.screen_x, event.screen_y).link
+                if url and not (selected and selected[0]) and is_web_link(url):
+                    target.post_message(ChatLog.LinkRequested(url))
+                    return
         if isinstance(event, Click) and event.button == 1 and event.chain >= 2:
             target, _ = self.get_widget_at(event.screen_x, event.screen_y)
             if isinstance(target, ChatInput):
@@ -190,7 +213,6 @@ class DianStarApp(App[None]):
     #session-list { height: 1fr; }
     #chat-pane { width: 1fr; }
     #chat { height: 1fr; padding: 1 2; scrollbar-size-vertical: 1; }
-    #stream { display: none; height: auto; max-height: 8; margin: 0 1; padding: 0 1; }
     #status { height: 1; padding: 0 1; color: $text-muted; }
     #input { height: auto; min-height: 1; max-height: 6; margin: 0 1; background: $boost; scrollbar-size-vertical: 1; }
     #hints { height: auto; max-height: 2; margin: 0 1; color: $text-muted; }
@@ -221,8 +243,29 @@ class DianStarApp(App[None]):
         self._active_thinking = None
         self._thinking_timer = None
         self._thinking_tail_start = None
+        self._thinking_rendered = None
         self._thinking_parts = []
         self._new_thinking_part = True
+        self._active_stream = None
+        self._stream_timer = None
+        self._stream_start = None
+        self._stream_tail_start = None
+        self._stream_lines = None
+        self._stream_width = None
+        self._stream_rendered = ""
+
+    def on_chat_log_link_requested(self, event: ChatLog.LinkRequested) -> None:
+        event.stop()
+        if is_web_link(event.url):
+            self.run_worker(self._open_web_link(event.url), group="browser")
+
+    async def _open_web_link(self, url: str) -> None:
+        try:
+            opened = await asyncio.to_thread(webbrowser.open, url, new=2)
+            if not opened:
+                self._status("未能打开浏览器，可复制链接后访问。")
+        except (OSError, webbrowser.Error):
+            self._status("未能打开浏览器，可复制链接后访问。")
 
     def get_default_screen(self) -> Screen:
         return ChatScreen(id="_default")
@@ -305,7 +348,6 @@ class DianStarApp(App[None]):
                 yield ListView(id="session-list")
             with Vertical(id="chat-pane"):
                 yield ChatLog(id="chat", wrap=True, markup=False, auto_scroll=True)
-                yield Static("", id="stream")
                 yield Static("", id="status")
                 yield ChatInput(placeholder="输入消息；Enter 发送，Shift+Enter / Ctrl+J 换行",
                                 id="input", compact=True, highlight_cursor_line=False)
@@ -350,6 +392,7 @@ class DianStarApp(App[None]):
         if self.busy:
             return
         self._close_copy_menu()
+        self._clear_stream()
         self._reset_active_thinking()
         self._expanded_thinking.clear()
         self._chat_blocks = []
@@ -383,6 +426,9 @@ class DianStarApp(App[None]):
                     if index == self._active_thinking:
                         self._thinking_tail_start = len(chat.lines)
                     chat.write(self._thinking_panel(index), width=max(1, chat.scrollable_content_region.width))
+                elif block["kind"] == "stream":
+                    self._begin_stream_render()
+                    self._paint_stream()
                 else:
                     self._write_message(block["role"], block["content"])
         else:
@@ -403,23 +449,93 @@ class DianStarApp(App[None]):
         self._welcome_only = False
         chat = self.query_one("#chat", RichLog)
         chat.write(Text("主包" if role == "user" else "DianStar", style="bold cyan" if role == "user" else "bold green"))
-        chat.write(Text(content) if role == "user" else Markdown(content))
+        chat.write(Text(content) if role == "user" else ChatMarkdown(content))
         chat.write("")
 
     def _status(self, message: str) -> None:
         self.query_one("#status", Static).update(message)
 
     def _stream_answer(self, content: str) -> None:
-        """Show the unfinished answer below the chat history until it is saved."""
-        widget = self.query_one("#stream", Static)
+        """Append the unfinished answer inside the log, with bounded repaint frequency."""
         if not content:
-            widget.display = False
-            widget.update("")
+            self._clear_stream(remove=True)
             return
-        visible = content[-max(240, (widget.size.width - 4) * 6):]
-        widget.update(Group(Text("DianStar", style="bold green"), Markdown(visible)))
-        widget.display = True
-        self._status("正在回答…")
+        if self._active_stream is None:
+            self._paint_thinking()
+            self._active_stream = len(self._chat_blocks)
+            self._chat_blocks.append({"kind":"stream", "content":content})
+            self._begin_stream_render()
+            self._paint_stream()
+            self._status("正在回答…")
+        else:
+            self._chat_blocks[self._active_stream]["content"] = content
+            if self._stream_timer is None:
+                self._stream_timer = self.set_timer(1 / 30, self._paint_stream)
+
+    def _begin_stream_render(self) -> None:
+        chat = self.query_one("#chat", ChatLog)
+        self._stream_start = len(chat.lines)
+        chat.write(Text("DianStar", style="bold green"))
+        self._stream_tail_start = len(chat.lines)
+        self._stream_width = chat.scrollable_content_region.width
+        self._stream_lines = StreamLines(self._stream_width)
+        self._stream_rendered = ""
+
+    def _paint_stream(self) -> None:
+        if self._stream_timer is not None:
+            self._stream_timer.stop()
+            self._stream_timer = None
+        if self._active_stream is None:
+            return
+        chat = self.query_one("#chat", ChatLog)
+        content = self._chat_blocks[self._active_stream]["content"]
+        # 已完成的显示行只写一次；长段落也只排版新收到的字符。
+        if (self._stream_width != chat.scrollable_content_region.width
+                or not content.startswith(self._stream_rendered)):
+            self._redraw_chat()
+            return
+        if content == self._stream_rendered:
+            return
+        follow = chat.is_vertical_scroll_end
+        chat.truncate_tail(self._stream_tail_start)
+        width = max(1, chat.scrollable_content_region.width)
+        completed = self._stream_lines.append(content[len(self._stream_rendered):])
+        if completed:
+            chat.write(Text("\n".join(completed), no_wrap=True, overflow="crop"),
+                       width=width, scroll_end=False)
+        self._stream_tail_start = len(chat.lines)
+        if self._stream_lines.tail:
+            chat.write(Text(self._stream_lines.tail, no_wrap=True, overflow="crop"),
+                       width=width, scroll_end=False)
+        self._stream_rendered = content
+        chat.refresh()
+        if follow:
+            chat.call_after_refresh(chat.scroll_end, animate=False, immediate=True, x_axis=False)
+
+    def _clear_stream(self, *, remove: bool = False) -> None:
+        if self._stream_timer is not None:
+            self._stream_timer.stop()
+            self._stream_timer = None
+        if remove and self._active_stream is not None:
+            chat = self.query_one("#chat", ChatLog)
+            self._chat_blocks.pop(self._active_stream)
+            if self._stream_start is not None:
+                chat.truncate_tail(self._stream_start)
+        self._active_stream = None
+        self._stream_start = self._stream_tail_start = None
+        self._stream_lines = None
+        self._stream_width = None
+        self._stream_rendered = ""
+
+    def _finish_answer(self, answer: str) -> None:
+        if self._active_stream is None:
+            self._show_message("assistant", answer)
+            return
+        chat = self.query_one("#chat", ChatLog)
+        self._chat_blocks[self._active_stream] = {"kind":"message", "role":"assistant", "content":answer}
+        chat.replace_tail(self._stream_start, Group(Text("DianStar", style="bold green"),
+                                                  ChatMarkdown(answer), Text("")))
+        self._clear_stream()
 
     def _receive_thinking(self, content: str) -> None:
         if not content:
@@ -452,6 +568,7 @@ class DianStarApp(App[None]):
             self._thinking_timer = None
         self._active_thinking = None
         self._thinking_tail_start = None
+        self._thinking_rendered = None
         self._thinking_parts = []
         self._new_thinking_part = True
 
@@ -470,11 +587,16 @@ class DianStarApp(App[None]):
             self._thinking_timer = None
         if self._active_thinking is None:
             return
+        signature = (self._active_thinking, self._chat_blocks[self._active_thinking]["content"],
+                     self._active_thinking in self._expanded_thinking)
+        if signature == self._thinking_rendered:
+            return
         chat = self.query_one("#chat", ChatLog)
         if self._active_thinking == len(self._chat_blocks) - 1 and self._thinking_tail_start is not None:
             chat.replace_tail(self._thinking_tail_start, self._thinking_panel(self._active_thinking))
         else:
             self._redraw_chat()
+        self._thinking_rendered = signature
 
     def action_toggle_thinking(self, index: int) -> None:
         if not 0 <= index < len(self._chat_blocks) or self._chat_blocks[index]["kind"] != "thinking":
@@ -518,31 +640,25 @@ class DianStarApp(App[None]):
         if previous is not None:
             bindings = self._bindings.key_to_bindings.get(previous, [])
             bindings[:] = [binding for binding in bindings
-                           if binding.action != "open_model_switcher"]
+                           if binding.action != "cycle_model"]
             if not bindings:
                 self._bindings.key_to_bindings.pop(previous, None)
-        self._bindings.bind(shortcut, "open_model_switcher", "切换模型",
+        self._bindings.bind(shortcut, "cycle_model", "下一个模型",
                             show=False, priority=True)
         self._installed_model_shortcut = shortcut
         self.refresh_bindings()
 
-    def action_open_model_switcher(self) -> None:
+    def action_cycle_model(self) -> None:
         if isinstance(self.screen, ModalScreen):
             raise SkipAction()
         self._close_copy_menu()
         if self.busy:
             return
         try:
-            self.push_screen(ConfigScreen(config_file=self.config_file, env_file=self.env_file,
-                                          quick_switch=True), self._model_switch_closed)
-        except (ValueError, OSError) as error:
-            self._status(f"无法打开模型选择：{error}")
-
-    def _model_switch_closed(self, saved: bool) -> None:
-        if saved:
-            model = load_model_settings(self.config_file).default_model
-            self._status(f"已切换到 {model}，下次提问生效。")
+            cycle_model(self.config_file, env_file=self.env_file)
             self._refresh_key_help()
+        except (ValueError, OSError) as error:
+            self._status(f"无法切换模型：{error}")
         self.query_one("#input", ChatInput).focus()
 
     def on_button_pressed(self, event: Button.Pressed) -> None:
@@ -633,13 +749,15 @@ class DianStarApp(App[None]):
             answer = await ask_deepseek(
                 question, history=history,
                 on_stream=self._stream_answer, on_thinking=self._receive_thinking,
+                env_file=self.env_file, on_paid_web=self._approve_paid_web,
+                on_permission=self._approve_permission,
             )
             self._paint_thinking()
             reasoning = (self._chat_blocks[self._active_thinking]["content"]
                          if self._active_thinking is not None else None)
             self.conversation.add_exchange(question, answer, reasoning_content=reasoning,
                                            model_turn_messages=history[history_length:] or None)
-            self._show_message("assistant", answer)
+            self._finish_answer(answer)
             self._stream_answer("")
             self.query_one("#session-name", Label).update(self.conversation.name or "未命名会话")
             await self._refresh_sessions()
@@ -658,6 +776,21 @@ class DianStarApp(App[None]):
             self._stream_answer("")
             self.busy = False
             self.query_one("#input", ChatInput).focus()
+
+    async def _approve_paid_web(self, request: dict) -> str:
+        choice = await self.push_screen_wait(PaidWebApproval(request))
+        if choice == "always" and not request.get("settings_change"):
+            try:
+                settings = load_search_settings(self.config_file.with_name("search.json"))
+                save_search_settings("auto", settings.key_id, paid_policy="allow",
+                                     path=self.config_file.with_name("search.json"),
+                                     config_file=self.config_file, env_file=self.env_file)
+            except (ValueError, OSError):
+                self._status("本轮已允许；未能保存长期授权，下次仍会询问。")
+        return choice
+
+    async def _approve_permission(self, request: dict) -> bool:
+        return await self.push_screen_wait(PermissionApproval(request))
 
     async def _command(self, command_line: str) -> None:
         command, _, argument = command_line.partition(" ")

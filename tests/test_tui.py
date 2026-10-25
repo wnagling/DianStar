@@ -380,7 +380,7 @@ class TuiTests(unittest.IsolatedAsyncioTestCase):
             app = DianStarApp(Conversation.create(Path(temporary)))
             release = asyncio.Event()
 
-            async def answer_later(question, *, history, on_stream, on_thinking):
+            async def answer_later(question, *, history, on_stream, on_thinking, **kwargs):
                 on_thinking("第一步\n第二步\n第三步\n第四步\n第五步\n再组织回答。")
                 on_stream("第一段")
                 await release.wait()
@@ -393,26 +393,37 @@ class TuiTests(unittest.IsolatedAsyncioTestCase):
                     app.query_one("#input", ChatInput).text = "测试流式输出"
                     await pilot.press("enter")
                     await pilot.pause()
-                    live = app.query_one("#stream", Static)
                     chat = app.query_one("#chat", RichLog)
-                    self.assertTrue(live.display)
-                    self.assertGreater(live.size.height, 0)
+                    self.assertIsNotNone(app._active_stream)
+                    self.assertFalse(app.query("#stream"))
                     self.assertEqual(len(app.query("#thinking")), 0)
                     self.assertIn("模型思考", "\n".join(line.text for line in chat.lines))
                     self.assertIn("再组织回答", "\n".join(line.text for line in chat.lines))
-                    rendered = "".join(segment.text for segment in app.console.render(live.visual._renderable))
+                    rendered = "\n".join(line.text for line in chat.lines)
                     self.assertIn("第一段", rendered)
                     release.set()
                     await app.workers.wait_for_complete()
                     await pilot.pause()
-                    self.assertFalse(live.display)
+                    self.assertIsNone(app._active_stream)
                     displayed = "\n".join(line.text for line in chat.lines)
                     self.assertLess(displayed.index("测试流式输出"), displayed.index("模型思考"))
                     self.assertLess(displayed.index("模型思考"), displayed.index("第一段第二段"))
                     self.assertIn("再组织回答", displayed)
                     self.assertNotIn("第一步", displayed)
                     index = next(i for i, b in enumerate(app._chat_blocks) if b["kind"] == "thinking")
-                    await pilot.click(chat, offset=(10, 4))
+                    title_position = None
+                    for y in range(chat.content_region.height):
+                        x = 0
+                        for segment in chat.render_line(y):
+                            if segment.style and segment.style.meta.get('@click') == f'app.toggle_thinking({index})':
+                                title_position = (chat.content_region.x-chat.region.x+x,
+                                                  chat.content_region.y-chat.region.y+y)
+                                break
+                            x += segment.cell_length
+                        if title_position is not None:
+                            break
+                    self.assertIsNotNone(title_position)
+                    await pilot.click(chat, offset=title_position)
                     self.assertIn(index, app._expanded_thinking)
                     self.assertIn("第一步", "\n".join(line.text for line in chat.lines))
                     app.action_toggle_thinking(index)
@@ -428,7 +439,7 @@ class TuiTests(unittest.IsolatedAsyncioTestCase):
             app = DianStarApp(Conversation.create(Path(temporary)))
             turns = 0
 
-            async def answer(question, *, history, on_stream, on_thinking):
+            async def answer(question, *, history, on_stream, on_thinking, **kwargs):
                 nonlocal turns
                 turns += 1
                 on_thinking(f"第{turns}轮思考")
@@ -471,7 +482,7 @@ class TuiTests(unittest.IsolatedAsyncioTestCase):
         with tempfile.TemporaryDirectory() as temporary:
             conversation = Conversation.create(Path(temporary))
             app = DianStarApp(conversation)
-            async def failed(question, *, history, on_stream, on_thinking):
+            async def failed(question, *, history, on_stream, on_thinking, **kwargs):
                 on_thinking("已收到的部分思考")
                 raise ValueError("测试失败")
             with patch("dianstar.tui.ask_deepseek", side_effect=failed):

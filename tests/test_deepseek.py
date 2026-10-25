@@ -21,6 +21,8 @@ from dianstar.prompts import ASSISTANT_INSTRUCTIONS, build_system_prompt
 from dianstar.tools.weather import WEATHER_TOOL
 from dianstar.tools.date_calculator import DATE_TOOL
 from dianstar.tools.number_calculator import NUMBER_TOOL
+from dianstar.tools.web import SEARCH_TOOL, FETCH_TOOL
+from dianstar.tools.web_access import WEB_ACCESS_STATUS_TOOL as WEB_ACCESS_TOOL
 
 
 class FakeStream:
@@ -519,7 +521,7 @@ class DeepSeekTests(unittest.IsolatedAsyncioTestCase):
             messages=[{"role": "system", "content": build_system_prompt()},
                       {"role": "user", "content": "Hello"}],
             stream=False,
-            tools=[WEATHER_TOOL, DATE_TOOL, NUMBER_TOOL],
+            tools=[WEATHER_TOOL, DATE_TOOL, NUMBER_TOOL, WEB_ACCESS_TOOL, SEARCH_TOOL, FETCH_TOOL],
             tool_choice="auto",
             extra_body={"thinking": {"type": "enabled"}},
         )
@@ -700,7 +702,8 @@ class DeepSeekTests(unittest.IsolatedAsyncioTestCase):
         weather.assert_awaited_once_with("潮州, 广东, 中国", "today")
         self.assertEqual(client.chat.completions.create.await_count, 2)
         sent = client.chat.completions.create.await_args_list[1].kwargs["messages"]
-        self.assertEqual(sent[-2], {"role": "user", "content": "潮州今天天气多少度？"})
+        self.assertEqual(sent[1], {"role": "user", "content": "潮州今天天气多少度？"})
+        self.assertEqual(sent[-1]["role"], "tool")
         self.assertIn('"temperature_current_c": 25.2', sent[-1]["content"])
         self.assertNotIn("current_time", sent[-1]["content"])
 
@@ -740,7 +743,8 @@ class DeepSeekTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(weather.await_count, 1)
         sent = client.chat.completions.create.await_args_list[2].kwargs["messages"]
         self.assertEqual(sent[1], {"role": "user", "content": "潮州现在几度？"})
-        self.assertIn('"temperature_current_c": 25.2', sent[2]["content"])
+        self.assertEqual(sent[-1]["role"], "tool")
+        self.assertIn('"temperature_current_c": 25.2', sent[-1]["content"])
         self.assertNotIn("DSML", repr(sent))
         self.assertEqual(history[-1]["content"], answer)
 

@@ -11,7 +11,7 @@ from dotenv import dotenv_values
 from textual.widgets import Button, Input, ListView, Select, Static
 from rich.cells import cell_len
 
-from dianstar.config import (create_key_profile, delete_key_profile, load_model_settings, save_api_key,
+from dianstar.config import (create_key_profile, cycle_model, delete_key_profile, load_model_settings, save_api_key,
                               save_model_settings, set_default_key, validate_shortcut)
 from dianstar.agent import ask_deepseek
 from dianstar.config_ui import ConfigScreen
@@ -20,6 +20,39 @@ from dianstar.tui import ChatInput, DianStarApp
 
 
 class ConfigTests(unittest.TestCase):
+    def test_cycle_models_across_keys_keeps_duplicates_and_wraps(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            config, env = root / '.local/config.json', root / '.env'
+            save_api_key('fake-primary', env)
+            create_key_profile('第二个 Key', 'fake-second', path=config, env_file=env)
+            save_model_settings(['deepseek-flash'], 'deepseek-flash', config, key_id='key2')
+            create_key_profile('空列表', 'fake-empty', path=config, env_file=env)
+            create_key_profile('未设置密钥', 'your-key-here', path=config, env_file=env)
+            save_model_settings(['skip-me'], 'skip-me', config, key_id='key4')
+            pairs = []
+            for _ in range(3):
+                settings = cycle_model(config, env_file=env)
+                pairs.append((settings.default_key_id, settings.default_model))
+            self.assertEqual(pairs, [('primary', 'deepseek-v4-pro'),
+                                     ('key2', 'deepseek-flash'), ('primary', 'deepseek-flash')])
+            self.assertEqual(load_model_settings(config), settings)
+            self.assertNotIn('fake-', config.read_text(encoding='utf-8'))
+
+    def test_cycle_handles_no_choice_and_single_choice(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            config, env = root / 'config.json', root / '.env'
+            with self.assertRaisesRegex(ValueError, '没有可切换'):
+                cycle_model(config, env_file=env)
+            self.assertFalse(config.exists())
+            save_api_key('fake-primary', env)
+            save_model_settings(['only-model'], 'only-model', config)
+            before = config.read_bytes()
+            settings = cycle_model(config, env_file=env)
+            self.assertEqual(settings.default_model, 'only-model')
+            self.assertEqual(config.read_bytes(), before)
+
     def test_first_added_key_becomes_default_when_legacy_key_is_unset(self):
         with tempfile.TemporaryDirectory() as temporary:
             root = Path(temporary)
@@ -116,6 +149,49 @@ class ConfigTests(unittest.TestCase):
 
 
 class ConfigTuiTests(unittest.IsolatedAsyncioTestCase):
+    async def test_shortcut_cycles_same_model_on_two_keys_without_dialog_or_draft_loss(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            config, env = root / '.local/config.json', root / '.env'
+            save_api_key('fake-primary', env)
+            save_model_settings(['deepseek-flash'], 'deepseek-flash', config)
+            create_key_profile('工作 Key', 'fake-second', path=config, env_file=env)
+            save_model_settings(['deepseek-flash'], 'deepseek-flash', config, key_id='key2')
+            app = DianStarApp(Conversation.create(root / 'conversations'), config_file=config, env_file=env)
+            async with app.run_test() as pilot:
+                field = app.query_one('#input', ChatInput)
+                field.text = '未发送\n草稿'
+                await pilot.press('ctrl+b')
+                self.assertNotIsInstance(app.screen, ConfigScreen)
+                self.assertEqual(load_model_settings(config).default_key_id, 'key2')
+                footer = str(app.query_one('#key-help', Static).render())
+                self.assertIn('deepseek-flash', footer)
+                self.assertNotIn('工作 Key', footer)
+                self.assertEqual(field.text, '未发送\n草稿')
+                app.busy = True
+                await pilot.press('ctrl+b')
+                self.assertEqual(load_model_settings(config).default_key_id, 'key2')
+                app.busy = False
+                await pilot.press('ctrl+b')
+                self.assertEqual(load_model_settings(config).default_key_id, 'primary')
+                self.assertEqual(app.conversation.messages, [])
+
+    @patch('dianstar.deepseek.AsyncOpenAI')
+    async def test_cycled_key_and_model_both_reach_next_sdk_request(self, client_class):
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            config, env = root / '.local/config.json', root / '.env'
+            save_api_key('fake-primary', env)
+            save_model_settings(['deepseek-flash'], 'deepseek-flash', config)
+            create_key_profile('工作 Key', 'fake-second', path=config, env_file=env)
+            save_model_settings(['deepseek-flash'], 'deepseek-flash', config, key_id='key2')
+            cycle_model(config, env_file=env)
+            client_class.return_value.chat.completions.create = AsyncMock(return_value=SimpleNamespace(
+                choices=[SimpleNamespace(finish_reason='stop', message=SimpleNamespace(content='你好'))]))
+            await ask_deepseek('你好', env_file=env)
+            self.assertEqual(client_class.call_args.kwargs['api_key'], 'fake-second')
+            self.assertEqual(client_class.return_value.chat.completions.create.await_args.kwargs['model'], 'deepseek-flash')
+
     async def test_key_editor_loads_masks_toggles_and_cancels_without_saving(self):
         with tempfile.TemporaryDirectory() as temporary:
             root = Path(temporary)
@@ -139,6 +215,7 @@ class ConfigTuiTests(unittest.IsolatedAsyncioTestCase):
                 await pilot.pause()
                 self.assertFalse(key.password)
                 self.assertEqual(str(toggle.label), "隐藏")
+                await pilot.pause(0.3)  # 两次独立单击，避免被 Textual 识别为双击。
                 await pilot.click("#key-visibility")
                 await pilot.pause()
                 self.assertTrue(key.password)
@@ -437,10 +514,11 @@ class ConfigTuiTests(unittest.IsolatedAsyncioTestCase):
                 self.assertEqual(dotenv_values(env_file)["DEEPSEEK_API_KEY"], "new-fake-key")
                 self.assertEqual(app.conversation.messages, [])
 
-    async def test_shortcut_setting_changes_model_picker_key(self):
+    async def test_shortcut_setting_changes_model_cycle_key(self):
         with tempfile.TemporaryDirectory() as temporary:
             root = Path(temporary)
             config_file = root / ".local" / "config.json"
+            save_api_key("fake-key", root / ".env")
             app = DianStarApp(Conversation.create(root / "conversations"),
                               config_file=config_file, env_file=root / ".env")
             async with app.run_test() as pilot:
@@ -463,11 +541,6 @@ class ConfigTuiTests(unittest.IsolatedAsyncioTestCase):
                 self.assertFalse(app.busy, "busy after old shortcut")
                 self.assertNotIsInstance(app.screen, ConfigScreen)
                 await pilot.press("alt+m")
-                self.assertIsInstance(app.screen, ConfigScreen,
-                    f"bindings={[(b.action, b.priority) for b in app._bindings.key_to_bindings.get('alt+m', [])]}; "
-                    f"busy={app.busy}; input={app.query_one('#input', ChatInput).text!r}")
-                self.assertEqual(app.screen.page, "default")
-                await pilot.press("down", "enter")
                 self.assertEqual(load_model_settings(config_file).default_model, "deepseek-v4-pro")
                 self.assertNotIsInstance(app.screen, ConfigScreen)
                 footer = str(app.query_one("#key-help", Static).render())

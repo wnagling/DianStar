@@ -20,7 +20,7 @@ class ConfigScreen(ModalScreen[bool]):
     #config-panel { width: 68; max-width: 95%; height: auto; max-height: 90%;
                     padding: 1 2; border: round $primary; background: $surface; }
     #config-title { height: 2; text-style: bold; }
-    #config-menu { height: 11; }
+    #config-menu { height: 12; }
     #config-menu ListItem, #default-list ListItem, #key-list ListItem,
     #model-list ListItem { height: 2; }
     #config-hint, #config-status, #detail-hint { height: auto; color: $text-muted; }

@@ -3,6 +3,7 @@
 import asyncio
 import json
 import re
+import uuid
 from pathlib import Path
 from types import SimpleNamespace
 from typing import Callable
@@ -139,19 +140,21 @@ class DeepSeekSession:
         self.pending_content: str | None = None
         self.pending_calls: list[ToolAction] = []
         self.observed_call_ids: set[str] = set()
-        self.raw_results: list[str] = []
 
     def _fresh_tool_result_context(self) -> list[dict]:
-        messages = [
-            {"role": "system", "content": self.instructions},
-            *self.history,
-            {"role": "user", "content": self.question},
-        ]
-        if self.pending_reasoning_content is not None:
-            messages.append({"role": "assistant", "content": "",
-                             "reasoning_content": self.pending_reasoning_content})
-        messages.append({"role": "user", "content": f"工具查询结果：{self.last_observation_text}"})
-        return messages
+        # DSML observations are normalized into real tool-call/result pairs.
+        # Never promote external data to user/developer/system instructions.
+        return [message.copy() for message in self.messages]
+
+    def add_control_result(self, action: str, result: dict) -> None:
+        """Record a trusted application event, without treating it as a user instruction."""
+        call_id = "control_" + uuid.uuid4().hex
+        self.messages.extend([
+            {"role": "assistant", "content": "", "reasoning_content": "", "tool_calls": [{"id": call_id,
+                "type": "function", "function": {"name": "manage_web_access", "arguments": '{"action":"status"}'}}]},
+            {"role": "tool", "tool_call_id": call_id, "content": json.dumps({
+                "origin": "application_permission_control", "requested_action": action, **result}, ensure_ascii=False)},
+        ])
 
     async def think(self, observations: list[Observation]) -> str | ToolAction | list[ToolAction]:
         force_text_retry = False
@@ -212,14 +215,17 @@ class DeepSeekSession:
             if _is_unparsed_tool_call(content):
                 if force_text_retry:
                     raise ValueError("模型连续返回无法执行的工具调用。")
-                actions = _parse_unparsed_tool_calls(content, self.tools)
+                actions = [ToolAction(action.name, action.arguments, "dsml_" + uuid.uuid4().hex,
+                    json.dumps(action.arguments, ensure_ascii=False))
+                    for action in _parse_unparsed_tool_calls(content, self.tools)]
                 self.pending_reasoning_content = reasoning_content
                 if observations and not self.clean_retry:
                     self.clean_retry = True
                     self.messages = self._fresh_tool_result_context()
                     continue
                 self.pending_calls = actions
-                self.raw_results = []
+                self.pending_content = None
+                self.observed_call_ids = set()
                 return actions if len(actions) > 1 else actions[0]
             raise ValueError("DeepSeek did not return a complete text answer.")
         raise ValueError("DeepSeek repeated invalid tool markup.")
@@ -284,15 +290,7 @@ class DeepSeekSession:
         """Record a tool result without exposing fields withheld by the caller."""
         self.last_observation_text = result_text
         if action.call_id is None:
-            # Raw DSML has no tool_call_id, so resume with a fresh text context.
-            self.raw_results.append(result_text)
-            if len(self.raw_results) == len(self.pending_calls):
-                self.last_observation_text = (self.raw_results[0] if len(self.raw_results) == 1
-                                              else "[" + ", ".join(self.raw_results) + "]")
-                self.messages = self._fresh_tool_result_context()
-                self.pending_calls = []
-                self.raw_results = []
-            return
+            raise ValueError("Tool results require an application-issued call ID.")
         if not self.observed_call_ids:
             assistant_message = {"role": "assistant", "content": self.pending_content, "tool_calls": [{
                 "id": pending.call_id, "type": "function", "function": {

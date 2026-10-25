@@ -21,10 +21,31 @@ def _print_answer(answer: str, *, interactive: bool, console: Console | None = N
 
 
 def _answer(question: str, conversation: Conversation | None = None) -> bool:
+    async def approve_paid_web(request: dict) -> str:
+        persistent = request.get("settings_change", False)
+        print("是否始终允许使用可能产生费用的网页 API 备用？" if persistent else
+              f"免费访问受限，是否允许使用可能产生费用的 API 继续本轮{request['operation']}？")
+        print(request['target'])
+        try:
+            choice = await asyncio.to_thread(input, "允许请输入 y；其他输入取消：")
+        except (EOFError, KeyboardInterrupt):
+            return "deny"
+        return ("always" if persistent else "turn") if choice.strip().lower() == "y" else "deny"
+
     try:
         history = conversation.model_context_messages() if conversation is not None else None
         history_length = len(history) if history is not None else 0
-        answer = asyncio.run(ask_deepseek(question, history=history))
+        approval = approve_paid_web if conversation is not None and sys.stdin.isatty() else None
+        async def approve_permission(request: dict) -> bool:
+            print("权限变更：" + request["description"])
+            try:
+                choice = await asyncio.to_thread(input, "确认请输入 y；其他输入取消：")
+            except (EOFError, KeyboardInterrupt):
+                return False
+            return choice.strip().lower() == "y"
+
+        answer = asyncio.run(ask_deepseek(question, history=history, on_paid_web=approval,
+            on_permission=approve_permission if approval is not None else None))
     except ValueError as error:
         print(f"错误：{error}", file=sys.stderr)
         return False

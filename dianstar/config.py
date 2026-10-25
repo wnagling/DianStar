@@ -180,6 +180,24 @@ def set_default_key(key_id: str, path: Path = CONFIG_FILE) -> ModelSettings:
     return _save(ModelSettings(current.profiles, key_id, current.switch_model_shortcut), path)
 
 
+def cycle_model(path: Path = CONFIG_FILE, *, env_file: Path = ENV_FILE) -> ModelSettings:
+    """Cycle (Key ID, model) pairs, atomically saving both selections."""
+    current = load_model_settings(path)
+    choices = [(profile.id, model) for profile in current.profiles
+               if profile.models and api_key_configured(env_file, key_id=profile.id)
+               for model in profile.models]
+    if not choices:
+        raise ValueError("没有可切换的模型，请在 /config 配置 Key 并添加模型。")
+    active = (current.default_key_id, current.default_model)
+    index = (choices.index(active) + 1) % len(choices) if active in choices else 0
+    key_id, model = choices[index]
+    if active == (key_id, model):
+        return current
+    profiles = tuple(KeyProfile(item.id, item.name, item.models, model)
+                     if item.id == key_id else item for item in current.profiles)
+    return _save(ModelSettings(profiles, key_id, current.switch_model_shortcut), path)
+
+
 def create_key_profile(name: str, key_value: str, *, path: Path = CONFIG_FILE,
                        env_file: Path = ENV_FILE) -> ModelSettings:
     current = load_model_settings(path)
