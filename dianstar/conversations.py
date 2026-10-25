@@ -152,7 +152,7 @@ class Conversation:
         if reasoning_content is not None:
             assistant_message["reasoning_content"] = reasoning_content
         messages = [*self.messages, {"role": "user", "content": question},
-                    {"role": "assistant", "content": answer}]
+                    assistant_message]
         model_messages = [*self.model_messages, *(model_turn_messages if model_turn_messages is not None
                                                   else [{"role": "user", "content": question},
                                                         assistant_message])]

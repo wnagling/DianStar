@@ -385,6 +385,7 @@ class TuiTests(unittest.IsolatedAsyncioTestCase):
                 on_stream("第一段")
                 await release.wait()
                 on_stream("第一段第二段")
+                on_thinking("")
                 return "第一段第二段"
 
             with patch("dianstar.tui.ask_deepseek", side_effect=answer_later):
@@ -393,22 +394,93 @@ class TuiTests(unittest.IsolatedAsyncioTestCase):
                     await pilot.press("enter")
                     await pilot.pause()
                     live = app.query_one("#stream", Static)
-                    thinking = app.query_one("#thinking", RichLog)
+                    chat = app.query_one("#chat", RichLog)
                     self.assertTrue(live.display)
                     self.assertGreater(live.size.height, 0)
-                    self.assertTrue(thinking.display)
-                    self.assertEqual(thinking.size.height, 4)
-                    self.assertIn("再组织回答", "\n".join(line.text for line in thinking.lines))
-                    self.assertGreater(thinking.scroll_y, 0)
+                    self.assertEqual(len(app.query("#thinking")), 0)
+                    self.assertIn("模型思考", "\n".join(line.text for line in chat.lines))
+                    self.assertIn("再组织回答", "\n".join(line.text for line in chat.lines))
                     rendered = "".join(segment.text for segment in app.console.render(live.visual._renderable))
                     self.assertIn("第一段", rendered)
                     release.set()
                     await app.workers.wait_for_complete()
                     await pilot.pause()
                     self.assertFalse(live.display)
-                    self.assertFalse(thinking.display)
+                    displayed = "\n".join(line.text for line in chat.lines)
+                    self.assertLess(displayed.index("测试流式输出"), displayed.index("模型思考"))
+                    self.assertLess(displayed.index("模型思考"), displayed.index("第一段第二段"))
+                    self.assertIn("再组织回答", displayed)
+                    self.assertNotIn("第一步", displayed)
+                    index = next(i for i, b in enumerate(app._chat_blocks) if b["kind"] == "thinking")
+                    await pilot.click(chat, offset=(10, 4))
+                    self.assertIn(index, app._expanded_thinking)
+                    self.assertIn("第一步", "\n".join(line.text for line in chat.lines))
+                    app.action_toggle_thinking(index)
+                    await pilot.pause()
+                    self.assertNotIn("第一步", "\n".join(line.text for line in chat.lines))
+                    restored = Conversation.load(app.conversation.id, Path(temporary))
+                    self.assertIn("第一步", restored.messages[-1]["reasoning_content"])
                     self.assertIn("第一段第二段", "\n".join(
                         line.text for line in app.query_one("#chat", RichLog).lines))
+
+    async def test_each_turn_keeps_own_thinking_and_history_restores_it(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            app = DianStarApp(Conversation.create(Path(temporary)))
+            turns = 0
+
+            async def answer(question, *, history, on_stream, on_thinking):
+                nonlocal turns
+                turns += 1
+                on_thinking(f"第{turns}轮思考")
+                on_thinking("")
+                on_thinking(f"第{turns}轮工具后思考")
+                return f"第{turns}轮回答"
+
+            with patch("dianstar.tui.ask_deepseek", side_effect=answer):
+                async with app.run_test() as pilot:
+                    for question in ("第一问", "第二问"):
+                        app.query_one("#input", ChatInput).text = question
+                        await pilot.press("enter")
+                        await app.workers.wait_for_complete()
+                        await pilot.pause()
+                    thoughts = [b["content"] for b in app._chat_blocks if b["kind"] == "thinking"]
+                    self.assertEqual(thoughts, ["第1轮思考\n\n第1轮工具后思考", "第2轮思考\n\n第2轮工具后思考"])
+                    conversation_id = app.conversation.id
+                    await app._command("/new")
+                    self.assertFalse(any(b["kind"] == "thinking" for b in app._chat_blocks))
+                    await app._open_conversation(conversation_id)
+                    self.assertEqual([b["content"] for b in app._chat_blocks if b["kind"] == "thinking"], thoughts)
+                    self.assertEqual(len(app._chat_blocks), 6)
+
+    async def test_legacy_model_reasoning_restores_by_turn_not_repeated_question(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            conversation = Conversation.create(Path(temporary))
+            for index in (1, 2):
+                conversation.add_exchange("相同的问题", f"回答{index}", model_turn_messages=[
+                    {"role": "user", "content": "相同的问题"},
+                    {"role": "assistant", "content": None, "reasoning_content": f"查询思考{index}"},
+                    {"role": "assistant", "content": f"回答{index}", "reasoning_content": f"回答思考{index}"},
+                ])
+            app = DianStarApp(Conversation.load(conversation.id, Path(temporary)))
+            async with app.run_test() as pilot:
+                await pilot.pause()
+                self.assertEqual([b["content"] for b in app._chat_blocks if b["kind"] == "thinking"],
+                                 ["查询思考1\n\n回答思考1", "查询思考2\n\n回答思考2"])
+
+    async def test_failed_turn_keeps_inline_thinking_without_fabricating_answer(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            conversation = Conversation.create(Path(temporary))
+            app = DianStarApp(conversation)
+            async def failed(question, *, history, on_stream, on_thinking):
+                on_thinking("已收到的部分思考")
+                raise ValueError("测试失败")
+            with patch("dianstar.tui.ask_deepseek", side_effect=failed):
+                async with app.run_test() as pilot:
+                    app.query_one("#input", ChatInput).text = "失败问题"
+                    await pilot.press("enter")
+                    await app.workers.wait_for_complete()
+                    self.assertEqual([b["kind"] for b in app._chat_blocks], ["message", "thinking"])
+                    self.assertEqual(conversation.messages, [])
 
     async def test_sidebar_can_be_collapsed_and_reopened(self):
         with tempfile.TemporaryDirectory() as temporary:

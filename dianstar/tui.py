@@ -10,11 +10,12 @@ from rich.console import Group
 from rich.markdown import Markdown
 from rich.text import Text
 from rich.style import Style
+from rich.panel import Panel
 from textual.app import App, ComposeResult
 from textual.binding import Binding
 from textual.containers import Horizontal, Vertical
 from textual.events import Click, MouseDown, MouseUp, Resize
-from textual.geometry import Offset
+from textual.geometry import Offset, Size
 from textual.message import Message
 from textual.selection import Selection
 from textual.screen import ModalScreen, Screen
@@ -80,6 +81,13 @@ class ChatLog(RichLog):
             self.screen.selections = {widget: selection for widget, selection
                                       in self.screen.selections.items() if widget is not self}
         return super().clear()
+
+    def replace_tail(self, start: int, renderable) -> None:
+        follow = self.is_vertical_scroll_end
+        self.lines = self.lines[:start]
+        self._line_cache.clear()
+        self.virtual_size = Size(self.virtual_size.width, len(self.lines))
+        self.write(renderable, width=max(1, self.scrollable_content_region.width), scroll_end=follow)
 
 
 class CopyMenu(Vertical):
@@ -182,7 +190,6 @@ class DianStarApp(App[None]):
     #session-list { height: 1fr; }
     #chat-pane { width: 1fr; }
     #chat { height: 1fr; padding: 1 2; scrollbar-size-vertical: 1; }
-    #thinking { display: none; height: 6; margin: 0 1; padding: 0 1; border: round $secondary; scrollbar-size-vertical: 0; }
     #stream { display: none; height: auto; max-height: 8; margin: 0 1; padding: 0 1; }
     #status { height: 1; padding: 0 1; color: $text-muted; }
     #input { height: auto; min-height: 1; max-height: 6; margin: 0 1; background: $boost; scrollbar-size-vertical: 1; }
@@ -209,6 +216,13 @@ class DianStarApp(App[None]):
         self._copy_menu_focus = None
         self._native_copy_menu_open = False
         self._native_menu = WindowsCopyMenuClient()
+        self._chat_blocks = []
+        self._expanded_thinking = set()
+        self._active_thinking = None
+        self._thinking_timer = None
+        self._thinking_tail_start = None
+        self._thinking_parts = []
+        self._new_thinking_part = True
 
     def get_default_screen(self) -> Screen:
         return ChatScreen(id="_default")
@@ -291,9 +305,6 @@ class DianStarApp(App[None]):
                 yield ListView(id="session-list")
             with Vertical(id="chat-pane"):
                 yield ChatLog(id="chat", wrap=True, markup=False, auto_scroll=True)
-                thinking = RichLog(id="thinking", wrap=True, markup=False, auto_scroll=True)
-                thinking.border_title = "模型思考"
-                yield thinking
                 yield Static("", id="stream")
                 yield Static("", id="status")
                 yield ChatInput(placeholder="输入消息；Enter 发送，Shift+Enter / Ctrl+J 换行",
@@ -312,7 +323,7 @@ class DianStarApp(App[None]):
         await self._refresh_sessions()
         self._render_history()
         if self._welcome_only:
-            self.call_after_refresh(self._render_history)
+            self.call_after_refresh(self._refresh_welcome)
         self.query_one("#input", ChatInput).focus()
 
     async def _warm_copy_menu(self) -> None:
@@ -328,15 +339,52 @@ class DianStarApp(App[None]):
         if self.is_mounted:
             self._close_copy_menu()
         if self._welcome_only:
-            self.call_after_refresh(self._render_history)
+            self.call_after_refresh(self._refresh_welcome)
+
+    def _refresh_welcome(self) -> None:
+        # 延迟布局回调执行时，用户可能已经开始或完成了一轮对话。
+        if self._welcome_only and not self.busy:
+            self._render_history()
 
     def _render_history(self) -> None:
+        if self.busy:
+            return
         self._close_copy_menu()
+        self._reset_active_thinking()
+        self._expanded_thinking.clear()
+        self._chat_blocks = []
+        # 旧会话把思考保存在模型消息中，按用户轮次对应，避免重复问题串轮。
+        reasoning_turns = []
+        for message in self.conversation.model_messages:
+            if message.get("role") == "user":
+                reasoning_turns.append([])
+            elif message.get("role") == "assistant" and reasoning_turns:
+                content = message.get("reasoning_content")
+                if isinstance(content, str) and content:
+                    reasoning_turns[-1].append(content)
+        compatible = (len(self.conversation.messages) % 2 == 0
+                      and len(reasoning_turns) == len(self.conversation.messages) // 2)
+        for index, message in enumerate(self.conversation.messages):
+            reasoning = message.get("reasoning_content", "")
+            if message["role"] == "assistant" and not reasoning and compatible:
+                reasoning = "\n\n".join(reasoning_turns[index // 2])
+            if message["role"] == "assistant" and reasoning:
+                self._chat_blocks.append({"kind": "thinking", "content": reasoning})
+            self._chat_blocks.append({"kind": "message", **message})
+        self._redraw_chat()
+
+    def _redraw_chat(self) -> None:
         chat = self.query_one("#chat", RichLog)
         chat.clear()
-        if self.conversation.messages:
-            for message in self.conversation.messages:
-                self._show_message(message["role"], message["content"])
+        if self._chat_blocks:
+            self._welcome_only = False
+            for index, block in enumerate(self._chat_blocks):
+                if block["kind"] == "thinking":
+                    if index == self._active_thinking:
+                        self._thinking_tail_start = len(chat.lines)
+                    chat.write(self._thinking_panel(index), width=max(1, chat.scrollable_content_region.width))
+                else:
+                    self._write_message(block["role"], block["content"])
         else:
             self._welcome_only = True
             art = welcome_art_lines(max(0, chat.size.width - 4), max(1, chat.size.height - 2))
@@ -348,6 +396,10 @@ class DianStarApp(App[None]):
         self.query_one("#session-name", Label).update(self.conversation.name or "未命名会话")
 
     def _show_message(self, role: str, content: str) -> None:
+        self._chat_blocks.append({"kind": "message", "role": role, "content": content})
+        self._write_message(role, content)
+
+    def _write_message(self, role: str, content: str) -> None:
         self._welcome_only = False
         chat = self.query_one("#chat", RichLog)
         chat.write(Text("主包" if role == "user" else "DianStar", style="bold cyan" if role == "user" else "bold green"))
@@ -369,21 +421,78 @@ class DianStarApp(App[None]):
         widget.display = True
         self._status("正在回答…")
 
+    def _receive_thinking(self, content: str) -> None:
+        if not content:
+            self._new_thinking_part = True
+            return
+        if self._new_thinking_part:
+            self._thinking_parts.append(content)
+            self._new_thinking_part = False
+        else:
+            self._thinking_parts[-1] = content
+        self._stream_thinking("\n\n".join(self._thinking_parts))
+
     def _stream_thinking(self, content: str) -> None:
-        """Show the latest thinking in a four-line boxed viewport."""
-        widget = self.query_one("#thinking", RichLog)
-        widget.clear()
-        widget.display = bool(content)
-        if content:
-            visible = content[-max(512, widget.size.width * 12):]
-            widget.write(Text(visible, style="#aeb7c6"))
-            widget.scroll_end(animate=False, immediate=True)
+        if not content:
+            self._reset_active_thinking()
+            return
+        if self._active_thinking is None:
+            self._active_thinking = len(self._chat_blocks)
+            self._chat_blocks.append({"kind": "thinking", "content": content})
+            self._thinking_tail_start = len(self.query_one("#chat", RichLog).lines)
+            self._paint_thinking()
+        else:
+            self._chat_blocks[self._active_thinking]["content"] = content
+            if self._thinking_timer is None:
+                self._thinking_timer = self.set_timer(0.1, self._paint_thinking)
+
+    def _reset_active_thinking(self) -> None:
+        if self._thinking_timer is not None:
+            self._thinking_timer.stop()
+            self._thinking_timer = None
+        self._active_thinking = None
+        self._thinking_tail_start = None
+        self._thinking_parts = []
+        self._new_thinking_part = True
+
+    def _thinking_panel(self, index: int) -> Panel:
+        expanded = index in self._expanded_thinking
+        content = self._chat_blocks[index]["content"]
+        title = Text("模型思考 · 收起" if expanded else "模型思考 · 展开完整内容",
+                     style=Style(color="#6b9cbb", meta={"@click": f"app.toggle_thinking({index})"}))
+        visible = content if expanded else "\n".join(content.splitlines()[-4:])
+        return Panel(Text(visible, style="#aeb7c6", no_wrap=not expanded, overflow="ellipsis"),
+                     title=title, title_align="left", border_style="#365f7d", padding=(0, 1))
+
+    def _paint_thinking(self) -> None:
+        if self._thinking_timer is not None:
+            self._thinking_timer.stop()
+            self._thinking_timer = None
+        if self._active_thinking is None:
+            return
+        chat = self.query_one("#chat", ChatLog)
+        if self._active_thinking == len(self._chat_blocks) - 1 and self._thinking_tail_start is not None:
+            chat.replace_tail(self._thinking_tail_start, self._thinking_panel(self._active_thinking))
+        else:
+            self._redraw_chat()
+
+    def action_toggle_thinking(self, index: int) -> None:
+        if not 0 <= index < len(self._chat_blocks) or self._chat_blocks[index]["kind"] != "thinking":
+            return
+        if index in self._expanded_thinking:
+            self._expanded_thinking.remove(index)
+        else:
+            self._expanded_thinking.add(index)
+        chat = self.query_one("#chat", RichLog)
+        scroll_y = chat.scroll_y
+        self._redraw_chat()
+        chat.call_after_refresh(chat.scroll_to, y=scroll_y, animate=False)
 
     def _set_sessions_visible(self, visible: bool) -> None:
         self.query_one("#sessions", Vertical).display = visible
         self.query_one("#toggle-sessions", Button).label = "收起会话" if visible else "显示会话"
         if self._welcome_only:
-            self.call_after_refresh(self._render_history)
+            self.call_after_refresh(self._refresh_welcome)
         if not visible:
             self.query_one("#input", ChatInput).focus()
 
@@ -517,17 +626,21 @@ class DianStarApp(App[None]):
         self.run_worker(self._ask(value), exclusive=True)
 
     async def _ask(self, question: str) -> None:
+        self._stream_thinking("")
         try:
             history = self.conversation.model_context_messages()
             history_length = len(history)
             answer = await ask_deepseek(
                 question, history=history,
-                on_stream=self._stream_answer, on_thinking=self._stream_thinking,
+                on_stream=self._stream_answer, on_thinking=self._receive_thinking,
             )
-            self.conversation.add_exchange(question, answer, model_turn_messages=history[history_length:] or None)
+            self._paint_thinking()
+            reasoning = (self._chat_blocks[self._active_thinking]["content"]
+                         if self._active_thinking is not None else None)
+            self.conversation.add_exchange(question, answer, reasoning_content=reasoning,
+                                           model_turn_messages=history[history_length:] or None)
             self._show_message("assistant", answer)
             self._stream_answer("")
-            self._stream_thinking("")
             self.query_one("#session-name", Label).update(self.conversation.name or "未命名会话")
             await self._refresh_sessions()
             self._status("")
@@ -540,8 +653,9 @@ class DianStarApp(App[None]):
         except (ValueError, OpenAIError, OSError) as error:
             self._status(f"请求失败：{error}")
         finally:
+            self._paint_thinking()
+            self._reset_active_thinking()
             self._stream_answer("")
-            self._stream_thinking("")
             self.busy = False
             self.query_one("#input", ChatInput).focus()
 
