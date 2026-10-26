@@ -72,7 +72,8 @@ class SourceEvidence:
             if message.get("role") == "assistant":
                 for call in message.get("tool_calls", []):
                     function = call.get("function", {})
-                    if function.get("name") in {"search_web", "read_webpage"}:
+                    if (function.get("name") in {"search_web", "read_webpage"}
+                            or str(function.get("name", "")).startswith("mcp_github__")):
                         try:
                             arguments = json.loads(function.get("arguments", "{}"))
                             if isinstance(arguments, dict):
@@ -91,7 +92,7 @@ class SourceEvidence:
 
     def _record(self, urls: list[str], evidence: dict, historical: bool) -> None:
         rank = {"unavailable": 0, "search_summary": 1, "page_text": 2,
-                "abstract": 2, "fulltext_page": 3}
+                "abstract": 2, "fulltext_page": 3, "github_api": 2}
         record = {**evidence, "historical": historical}
         for url in urls:
             key = canonical_url(url)
@@ -111,6 +112,11 @@ class SourceEvidence:
                 self._record([arguments.get("url")], evidence, historical)
                 return {**result, "evidence": evidence}
             return result
+        if name.startswith("mcp_github__") and result.get("server") == "github":
+            evidence = {"kind": "github_api", "truncated": bool(result.get("truncated")),
+                        "complete_document_verified": False}
+            self._record(result.get("sources", []), evidence, historical)
+            return {**result, "evidence": evidence}
         if name == "search_web" and isinstance(result.get("results"), list):
             evidence = {"kind": "search_summary", "complete_document_verified": False}
             items = []
@@ -146,6 +152,8 @@ class SourceEvidence:
                 label = "已读摘要页，不能据此核实全文和实验细节"
             elif record["kind"] == "fulltext_page":
                 label = "已取得正文页面，未据此确认论文完整性"
+            elif record["kind"] == "github_api":
+                label = "已取得 GitHub API 对象资料；不表示已读取其中所有评论、文件或链接"
             else:
                 label = "已取得网页文本，是否为全文尚未确认"
             if record and record.get("truncated"):

@@ -1,14 +1,12 @@
-"""统一网页搜索与读取工具：免费 Bing RSS / 本地正文，或 DeepSeek Search/Fetch。"""
+"""统一网页搜索与读取：有界免费搜索备用、本地正文与已授权 API。"""
 
 import asyncio
 import json
 import os
-import re
 import ssl
 import uuid
 from pathlib import Path
 from typing import Awaitable, Callable
-from urllib.parse import urlencode
 from xml.etree import ElementTree
 
 import httpx
@@ -17,6 +15,8 @@ import certifi
 from ..config import api_key_configured, load_model_settings, read_api_key
 from ..search_config import SearchSettings
 from ..permissions import Authorization
+from .web_search import (free_search, normalize_items, filter_source_scope,
+                         filter_search_noise as _filter_obvious_search_noise)
 from .web_reader import (MAX_CONTENT, PinnedTLSContext, WebError, bounded_body, extract_page,
                          public_get, public_url)
 
@@ -25,31 +25,9 @@ MAX_PAID_WEB_CALLS = 30
 MAX_WEB_ATTEMPTS = MAX_WEB_OPERATIONS + MAX_PAID_WEB_CALLS
 
 
-def _filter_obvious_search_noise(query: str, results: list[dict]) -> list[dict]:
-    """Conservatively remove zero-overlap results for multi-term English searches.
-
-    This is a lexical sanity check, not semantic ranking or proof of relevance.
-    Cross-language and single-term searches are left to the model to assess.
-    """
-    query = re.sub(r"-?site:\S+|(?:before|after|lang):\S+", " ", query.lower())
-    ignored = {"about", "against", "through", "with", "from", "find", "search", "best",
-               "latest", "official", "website", "paper", "papers", "research", "arxiv"}
-    terms = set(re.findall(r"[a-z][a-z0-9_-]{3,}", query)) - ignored
-    if len(terms) < 2:
-        return results
-    kept = []
-    for result in results:
-        text = " ".join(str(result.get(key, "")) for key in ("title", "summary", "url")).lower()
-        if any(re.search(rf"(?<!\w){re.escape(term)}(?!\w)", text) for term in terms):
-            kept.append(result)
-    if results and not kept:
-        raise WebError("search_low_relevance", "免费搜索虽返回内容，但结果未命中主要检索词，未取得可用的相关来源。")
-    return kept
-
-
 SEARCH_TOOL = {"type": "function", "function": {
     "name": "search_web",
-    "description": "按关键词搜索公开网页，返回标题、链接和摘要。摘要不是已阅读全文的证据；必要时用 read_webpage 核对。程序优先免费访问，并按用户授权处理必要的 API 备用，免费失败后先尝试改词或读取其他合理来源；仍缺必要证据时可带返回的 api_fallback 标识申请继续，是否使用 API 由程序授权控制。",
+    "description": "按关键词搜索公开网页，返回标题、链接和摘要；程序会在 Bing 结果不可用时尝试免费 360 搜索。摘要不是已阅读全文的证据，必要时用 read_webpage 核对。结果无关、为空或解析失败时应改词或限定来源，不能仅因此申请付费。只有两个免费入口均受访问限制且返回 api_fallback 时才可申请搜索备用；须先尝试其他查询。是否使用 API 由程序授权控制。",
     "parameters": {"type": "object", "properties": {
         "query": {"type": "string", "description": "1 至 128 字符的具体关键词，可按需限定来源域名；不要包含密钥或隐私。"},
         "count": {"type": "string", "description": "最多返回条数，字符串整数 1 至 20，默认 10；实际条数取决于来源与筛选。"},
@@ -81,6 +59,7 @@ class WebTools:
         self._turn_approval = None
         self.authorization = authorization if authorization is not None else Authorization()
         self._free_paths = set()
+        self._free_search_queries = set()
         self._pending_fallbacks = {}
         self._provider = "free" if settings.provider == "auto" else settings.provider
 
@@ -148,10 +127,16 @@ class WebTools:
         self.operations += 1
         self._provider = "free" if self.settings.provider == "auto" else self.settings.provider
         result = await self._attempt(name, arguments)
-        eligible = {"search_blocked", "search_low_relevance", "page_restricted", "empty_page", "unsupported_content", "invalid_web_response",
+        eligible = {"page_restricted", "empty_page", "unsupported_content", "invalid_web_response",
                     "web_http_405", "web_http_406", "web_http_415"}
         if name == "search_web":
-            eligible.add("web_http_403")
+            # A broken/irrelevant search is not proof that a paid service is
+            # necessary. Only confirmed restrictions on both free engines count.
+            attempts = result.get("free_search_attempts", [])
+            eligible = {"search_blocked"} if (len(attempts) == 2 and
+                all(item.get("status") == "search_blocked" for item in attempts)) else set()
+            if result.get("error") in eligible or not result.get("error"):
+                self._free_search_queries.add(self._target(name, arguments))
         target = self._target(name, arguments)
         # 更新目标结果时使旧凭据失效，避免成功读取后还对旧失败付费。
         self._pending_fallbacks = {key:value for key,value in self._pending_fallbacks.items()
@@ -172,7 +157,7 @@ class WebTools:
         if pending is None or self._request_key(name, arguments) != self._request_key(pending[0], pending[1]):
             return {"error": "invalid_api_fallback", "message": "备用标识无效或不对应此请求，请先免费访问目标；未调用 API。"}
         result = pending[2]
-        if len(self._free_paths) < 2:
+        if len(self._free_paths) < 2 or (name == "search_web" and len(self._free_search_queries) < 2):
             return {**result, "api_fallback": token, "message": "尚未尝试其他合理免费路径，请先改词或读取其他来源；未请求付费授权。"}
         if self.settings.provider != "auto":
             return result
@@ -249,7 +234,10 @@ class WebTools:
                     return await self.fetch(**arguments)
                 raise WebError("unknown_tool", "网页工具不存在。")
         except WebError as error:
-            return {"error": error.code, "message": str(error)}
+            result = {"error": error.code, "message": str(error)}
+            if hasattr(error, "attempts"):
+                result["free_search_attempts"] = error.attempts
+            return result
         except (httpx.TimeoutException, TimeoutError):
             return {"error": "web_timeout", "message": "网页服务超时，本次未取得可用结果。"}
         except httpx.HTTPStatusError as error:
@@ -289,36 +277,10 @@ class WebTools:
             if not isinstance(items, list):
                 raise ValueError
         else:
-            url = "https://www.bing.com/search?" + urlencode({"q": query, "format": "rss", "count": limit})
-            # 固定搜索主机，不访问用户指定目标，也不跟随服务端跳转。
-            async with self.client.stream("GET", url) as response:
-                response.raise_for_status()
-                if response.status_code != 200:
-                    raise WebError("search_blocked", "免费搜索没有返回可用结果。")
-                body = await bounded_body(response)
-            if b"<!DOCTYPE" in body.upper() or b"<!ENTITY" in body.upper():
-                raise WebError("search_blocked", "免费搜索返回了验证页面或不支持的内容，未获得搜索结果。")
-            root = ElementTree.fromstring(body)
-            if root.tag != "rss" or root.find("channel") is None:
-                raise WebError("search_blocked", "免费搜索返回了不支持的页面，未获得搜索结果。")
-            items = [{"title": item.findtext("title", ""), "url": item.findtext("link", ""),
-                      "summary": item.findtext("description", "")} for item in root.findall("./channel/item")]
-        results = []
-        for item in items[:50]:
-            if not isinstance(item, dict):
-                raise ValueError
-            try:
-                url = str(public_url(item["url"]))
-            except WebError:
-                continue
-            title, summary = item["title"], item.get("summary") or item.get("snippet", "")
-            if not isinstance(title, str) or not isinstance(summary, str):
-                raise ValueError
-            published = item.get("date")
-            results.append({"title": title[:300], "url": url, "summary": summary[:1000],
-                            "published_at": published[:100] if isinstance(published, str) else None})
-        if self._provider == "free":
-            results = _filter_obvious_search_noise(query, results)
+            results, attempts = await free_search(self.client, query, limit)
+            return {"provider": "free", "query": query, "results": results,
+                    "free_search_attempts": attempts, "content_kind": "search_summaries", "untrusted": True}
+        results = filter_source_scope(query, normalize_items(items))
         results = results[:limit]
         return {"provider": self._provider, "query": query, "results": results,
                 "content_kind": "search_summaries", "untrusted": True}

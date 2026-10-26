@@ -63,9 +63,22 @@ class ChatLog(RichLog):
             self.url = url
 
     def get_selection(self, selection: Selection) -> tuple[str, str] | None:
-        if not self.lines or (selection.start is not None and selection.start.y >= len(self.lines)):
+        # Extract from display rows directly: splitlines() drops the final blank
+        # row and also treats some characters inside a row as line boundaries.
+        if selection.start is not None and selection.end is not None:
+            selection = Selection.from_offsets(selection.start, selection.end)
+        start = max(0, selection.start.y) if selection.start is not None else 0
+        end = min(len(self.lines) - 1, selection.end.y) if selection.end is not None else len(self.lines) - 1
+        if not self.lines or start > end:
             return None
-        return selection.extract("\n".join(line.text.rstrip(" ") for line in self.lines)), "\n"
+        selected = []
+        for row in range(start, end + 1):
+            text = self.lines[row].text.rstrip(" ")
+            span = selection.get_span(row)
+            if span is not None:
+                left, right = span
+                selected.append(text[max(0, left):None if right == -1 else max(0, right)])
+        return "\n".join(selected), "\n"
 
     def render_line(self, y: int) -> Strip:
         scroll_x, scroll_y = self.scroll_offset
@@ -93,6 +106,11 @@ class ChatLog(RichLog):
         return super().clear()
 
     def truncate_tail(self, start: int) -> None:
+        if self.is_attached:
+            selection = self.screen.selections.get(self)
+            if selection is not None and (selection.end is None or selection.end.y >= start):
+                self.screen.selections = {widget: value for widget, value
+                                          in self.screen.selections.items() if widget is not self}
         del self.lines[start:]
         self._line_cache.clear()
         self.virtual_size = Size(self.virtual_size.width, len(self.lines))

@@ -80,7 +80,8 @@ class ReaderTests(unittest.IsolatedAsyncioTestCase):
             _filter_obvious_search_noise('prompt injection defense site:arxiv.org', [noise])
         self.assertEqual(caught.exception.code, 'search_low_relevance')
         for query in ['Python', '提示词注入防御']:
-            self.assertEqual(_filter_obvious_search_noise(query, [noise]), [noise])
+            with self.assertRaises(WebError):
+                _filter_obvious_search_noise(query, [noise])
         self.assertEqual(_filter_obvious_search_noise('prompt injection defense', []), [])
 
     async def test_fake_ip_is_resolved_publicly_before_connecting_checked_ip(self):
@@ -288,14 +289,15 @@ class WebToolTests(unittest.IsolatedAsyncioTestCase):
         calls = []
         def respond(request):
             calls.append(request)
-            return httpx.Response(200, text='<!DOCTYPE html><html>captcha</html>')
+            return httpx.Response(200, text='<!DOCTYPE html><html><title>Captcha verification</title>captcha</html>')
         with tempfile.TemporaryDirectory() as temporary:
             async with await self.tool('free', respond, Path(temporary)) as service:
                 with patch('dianstar.tools.web_reader.pinned_url', new=AsyncMock(side_effect=lambda url, **kwargs: url)):
                     result = await service.execute('search_web', {'query': 'test'})
         self.assertEqual(result['error'], 'search_blocked')
-        self.assertEqual(len(calls), 1)
+        self.assertEqual(len(calls), 2)
         self.assertEqual(calls[0].url.host, 'www.bing.com')
+        self.assertEqual(calls[1].url.host, 'www.so.com')
 
     async def test_api_uses_selected_search_key_and_sanitizes_results(self):
         with tempfile.TemporaryDirectory() as temporary:
@@ -446,7 +448,8 @@ class WebIntegrationTests(unittest.IsolatedAsyncioTestCase):
             async with app.run_test(size=(100, 35)) as pilot:
                 app.push_screen(ConfigScreen(config_file=config, env_file=env))
                 await pilot.pause()
-                self.assertEqual(len(app.screen.query_one('#config-menu', ListView).children), 4)
+                self.assertEqual(len(app.screen.query_one('#config-menu', ListView).children), 5)
+                self.assertTrue(app.screen.query('#menu-mcp'))
                 self.assertFalse(app.screen.query('#menu-search'))
                 self.assertFalse(app.screen.query('#search-page'))
                 self.assertEqual(load_model_settings(config).default_model, 'deepseek-flash')

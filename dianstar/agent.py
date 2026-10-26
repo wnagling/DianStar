@@ -11,6 +11,8 @@ from .prompts import build_system_prompt
 from .search_config import load_search_settings
 from .source_evidence import SourceEvidence
 from .permissions import Authorization, ToolGateway, ToolRegistration
+from .mcp_client import MCPTools, MCP_STATUS_TOOL
+from .mcp_config import MCPSettings, load_mcp_settings
 from .permission_intent import resolve_intent, ACTION_LABELS
 from .tools.web import FETCH_TOOL, SEARCH_TOOL, MAX_WEB_OPERATIONS, MAX_PAID_WEB_CALLS, WebTools
 from .tools.web_access import WEB_ACCESS_TOOL, WEB_ACCESS_STATUS_TOOL, manage_web_access
@@ -47,6 +49,13 @@ async def ask_deepseek(
     instructions = build_system_prompt()
     client = create_client(env_file, key_id=settings.default_key_id)
     authorization = Authorization()
+    mcp_path = env_file.parent / ".local" / "mcp.json"
+    mcp_error = None
+    try:
+        mcp_settings = load_mcp_settings(mcp_path)
+    except ValueError:
+        mcp_settings = MCPSettings()
+        mcp_error = "MCP 配置无效，请在 /config 的 MCP 页面检查并保存。"
     def observe_error(action: ToolAction, code: str) -> Observation:
         result = {"error": code, "requested_location": action.arguments["location"],
                   "requested_date": action.arguments["date"]}
@@ -114,11 +123,22 @@ async def ask_deepseek(
 
     async def act(action: ToolAction) -> Observation:
         result = await gateway.execute(action)
+        if action.name.startswith("mcp_github__"):
+            result = Observation(action, evidence.observe(action.name, action.arguments, result.result))
         session.observe(action, json.dumps(result.result, ensure_ascii=False))
         return result
 
-    async with client, WebTools(search_settings, env_file, on_paid_web, authorization=authorization) as web:
+    async with client, WebTools(search_settings, env_file, on_paid_web, authorization=authorization) as web, \
+            MCPTools(mcp_settings, env_file, authorization) as mcp:
         try:
+            if mcp_error:
+                mcp.status["configuration"] = {"state": "invalid", "message": mcp_error}
+            if mcp_path.exists():
+                async def act_mcp_status(action):
+                    return Observation(action, mcp.information())
+                tool_registry["mcp_status"] = ToolRegistration(MCP_STATUS_TOOL, "permissions.read", act_mcp_status)
+                tool_registry.update(mcp.registry)
+                session.tools = [entry.schema for entry in tool_registry.values()]
             intent = await resolve_intent(question, client, settings.default_model)
             if intent is not None:
                 # Restoring ask from deny is an expansion, even when the phrase

@@ -4,6 +4,7 @@ import asyncio
 import json
 import re
 import uuid
+from copy import deepcopy
 from pathlib import Path
 from types import SimpleNamespace
 from typing import Callable
@@ -13,6 +14,25 @@ from openai import AsyncOpenAI
 
 from .config import ENV_FILE, PROJECT_ROOT, read_api_key
 from .loop import Observation, ToolAction
+from .permissions import valid_arguments
+
+
+def _decoded_arguments_valid(schema, arguments):
+    # Decoding checks structure/types; the execution gateway enforces enums and
+    # exact policy. Invalid enum choices must become tool errors, not disappear.
+    checked = deepcopy(schema)
+    checked["parameters"].setdefault("additionalProperties", False)
+    def loosen(value):
+        if isinstance(value, dict):
+            value.pop("enum", None)
+            value.pop("const", None)
+            for item in value.values():
+                loosen(item)
+        elif isinstance(value, list):
+            for item in value:
+                loosen(item)
+    loosen(checked)
+    return valid_arguments({"function": checked}, arguments)
 
 
 MODEL = "deepseek-flash"
@@ -60,13 +80,12 @@ def _parse_unparsed_tool_calls(content: str, tool_schemas: list[dict]) -> list[T
         if (invoke.text and invoke.text.strip()) or (invoke.tail and invoke.tail.strip()):
             raise ValueError("DeepSeek returned invalid tool markup.")
         schema = schemas[invoke.attrib["name"]]
-        required = set(schema["parameters"]["required"])
         allowed = set(schema["parameters"]["properties"])
         arguments = {}
         for parameter in invoke:
             if (
                 parameter.tag != "parameter"
-                or parameter.attrib.get("string") != "true"
+                or parameter.attrib.get("string") not in {"true", "false"}
                 or set(parameter.attrib) != {"name", "string"}
                 or parameter.attrib["name"] not in allowed
                 or parameter.attrib["name"] in arguments
@@ -74,14 +93,20 @@ def _parse_unparsed_tool_calls(content: str, tool_schemas: list[dict]) -> list[T
                 or (parameter.tail and parameter.tail.strip())
             ):
                 raise ValueError("DeepSeek returned invalid tool markup.")
-            arguments[parameter.attrib["name"]] = parameter.text or ""
-        if not required <= set(arguments) or not all(value.strip() for value in arguments.values()):
+            value = parameter.text or ""
+            if parameter.attrib["string"] == "false":
+                try:
+                    value = json.loads(value)
+                except ValueError as error:
+                    raise ValueError("DeepSeek returned invalid tool markup.") from error
+            arguments[parameter.attrib["name"]] = value
+        if not _decoded_arguments_valid(schema, arguments):
             raise ValueError("DeepSeek returned invalid tool markup.")
         actions.append(ToolAction(invoke.attrib["name"], arguments))
     return actions
 
 
-def _tool_arguments(call, tool_schemas: list[dict]) -> dict[str, str]:
+def _tool_arguments(call, tool_schemas: list[dict]) -> dict[str, object]:
     schemas = {tool["function"]["name"]: tool["function"] for tool in tool_schemas}
     schema = schemas.get(call.function.name)
     if schema is None:
@@ -90,11 +115,7 @@ def _tool_arguments(call, tool_schemas: list[dict]) -> dict[str, str]:
         arguments = json.loads(call.function.arguments)
     except (ValueError, TypeError) as error:
         raise ValueError("DeepSeek returned invalid tool arguments.") from error
-    required = set(schema["parameters"]["required"])
-    allowed = set(schema["parameters"]["properties"])
-    if not isinstance(arguments, dict) or not required <= set(arguments) <= allowed:
-        raise ValueError("DeepSeek returned invalid tool arguments.")
-    if not all(isinstance(value, str) and value.strip() for value in arguments.values()):
+    if not _decoded_arguments_valid(schema, arguments):
         raise ValueError("DeepSeek returned invalid tool arguments.")
     return arguments
 

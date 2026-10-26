@@ -54,10 +54,10 @@ class FallbackTests(unittest.IsolatedAsyncioTestCase):
                     service._client = httpx.AsyncClient(transport=httpx.MockTransport(respond))
                     result = await service.execute('search_web', {'query':'prompt injection defense'})
                     self.assertEqual(result['error'], 'search_low_relevance')
-                    self.assertIn('api_fallback', result)
+                    self.assertNotIn('api_fallback', result)
                     self.assertEqual(service.paid_calls, 0)
                     approve.assert_not_awaited()
-                    self.assertEqual([r.method for r in requests], ['GET'])
+                    self.assertEqual([r.method for r in requests], ['GET', 'GET'])
 
     async def test_requires_distinct_free_alternative_and_exact_target_token(self):
         with tempfile.TemporaryDirectory() as temporary:

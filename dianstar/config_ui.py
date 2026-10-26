@@ -74,6 +74,7 @@ class ConfigScreen(ModalScreen[bool]):
                                    id="menu-default")
                     yield ListItem(Static("▣  快捷键    ·    1 项功能"),
                                    id="menu-shortcuts")
+                    yield ListItem(Static("▣  MCP       ·    Git / GitHub 只读工具"), id="menu-mcp")
                 yield Static("↑/↓ 选择  ·  Enter 进入  ·  Esc 关闭", id="config-hint")
 
             with Vertical(classes="config-detail", id="key-page"):
@@ -259,6 +260,12 @@ class ConfigScreen(ModalScreen[bool]):
         self._show_page("key-edit")
 
     async def on_list_view_selected(self, event: ListView.Selected) -> None:
+        if event.list_view.id == "config-menu" and event.item.id == "menu-mcp":
+            from .mcp_ui import MCPConfigScreen
+            def saved(changed):
+                self.changed = self.changed or bool(changed)
+            self.app.push_screen(MCPConfigScreen(self.config_file.with_name("mcp.json"), self.env_file), saved)
+            return
         if event.list_view.id == "config-menu" and event.item.id:
             page = {"menu-key": "key", "menu-models": "models",
                     "menu-default": "default", "menu-shortcuts": "shortcuts"}.get(event.item.id)

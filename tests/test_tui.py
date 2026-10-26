@@ -5,6 +5,9 @@ import tempfile
 import unittest
 from pathlib import Path
 from unittest.mock import AsyncMock, patch
+from rich.segment import Segment
+from rich.text import Text
+from textual.strip import Strip
 
 from textual.containers import Vertical
 from textual.events import Click, Paste
@@ -18,7 +21,45 @@ from dianstar.tui import ChatInput, ChatLog, CopyMenu, DianStarApp
 from dianstar.welcome_art import welcome_art_lines
 
 
+class ChatSelectionTests(unittest.TestCase):
+    def setUp(self):
+        self.chat = ChatLog()
+        self.chat.lines = [Strip([Segment(text)]) for text in ("中文答案", "第二行", "")]
+
+    def test_trailing_blank_row_does_not_crash(self):
+        self.assertEqual(self.chat.get_selection(Selection(Offset(0, 2), Offset(1, 2))), ("", "\n"))
+        self.assertEqual(self.chat.get_selection(Selection(None, None)), ("中文答案\n第二行\n", "\n"))
+
+    def test_stale_endpoints_are_bounded(self):
+        self.assertIsNone(self.chat.get_selection(Selection(Offset(0, 3), Offset(1, 3))))
+        self.assertEqual(self.chat.get_selection(Selection(Offset(1, 0), Offset(2, 90))), ("文答案\n第二行\n", "\n"))
+        self.chat.lines = []
+        self.assertIsNone(self.chat.get_selection(Selection(None, None)))
+
+    def test_reverse_drag_and_unicode_line_separator(self):
+        self.assertEqual(self.chat.get_selection(Selection(Offset(2, 1), Offset(1, 0))), ("文答案\n第二", "\n"))
+        self.chat.lines = [Strip([Segment("甲\u2028乙")]), Strip([Segment("")])]
+        self.assertEqual(self.chat.get_selection(Selection(Offset(0, 1), Offset(1, 1))), ("", "\n"))
+
+
 class TuiTests(unittest.IsolatedAsyncioTestCase):
+    async def test_replacing_selected_tail_clears_only_affected_selection(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            app = DianStarApp(Conversation.create(Path(temporary)))
+            async with app.run_test() as pilot:
+                await pilot.pause()
+                chat = app.query_one("#chat", ChatLog)
+                chat.clear()
+                chat.write(Text("保留行\n更新行\n"))
+                app.screen.selections = {chat: Selection(Offset(0, 0), Offset(2, 0))}
+                chat.truncate_tail(1)
+                self.assertEqual(app.screen.get_selected_text(), "保留")
+                chat.write(Text("新内容\n"))
+                app.screen.selections = {chat: Selection(Offset(0, 1), Offset(1, 2))}
+                chat.replace_tail(1, Text("替换内容"))
+                self.assertEqual(app.screen.selections, {})
+                self.assertIsNone(app.screen.get_selected_text())
+
     async def test_input_double_click_and_ctrl_a_select_only_multiline_draft(self):
         with tempfile.TemporaryDirectory() as temporary:
             conversation = Conversation.create(Path(temporary))
