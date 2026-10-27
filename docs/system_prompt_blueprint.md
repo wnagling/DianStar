@@ -2,7 +2,7 @@
 
 状态：设计蓝图，不是当前运行时提示词，不由程序加载或发送给模型。
 
-当前生效版本：[`dianstar/system_prompt.md`](../dianstar/system_prompt.md)。本蓝图借鉴用户提供的 OpenDesk 提示词快照的组织方式，规则按 DianStar 的目标和能力重新编写；参考快照不作为官方实现或可靠性的证明。
+当前生效版本：[`dianstar/prompts/system.md`](../dianstar/prompts/system.md)。本蓝图借鉴用户提供的 OpenDesk 提示词快照的组织方式，规则按 DianStar 的目标和能力重新编写；参考快照不作为官方实现或可靠性的证明。
 
 ## 目标与使用方式
 
@@ -88,7 +88,7 @@
 
 ### 文件访问、代码修改与命令执行
 
-已增加本地 stdio MCP 客户端、Git 查询及第一批工程操作（分支、精确暂存/取消暂存、commit、fetch、push），以及官方 GitHub MCP 的公开仓库只读查询。Git 写操作单独开启并逐次确认；服务和仓库范围由用户配置，不接受模型或外部资料修改。运行时规则见 `system_prompt.md` 的“MCP 与 Git 查询”；具体配置和边界见 [MCP 接入](./MCP接入.md)。pull、merge 和 worktree 属于后续阶段。
+已增加本地 stdio MCP 客户端、Git 查询及第一批工程操作（分支、精确暂存/取消暂存、commit、fetch、push），以及官方 GitHub MCP 的公开仓库只读查询。Git 写操作单独开启并逐次确认；服务和仓库范围由用户配置，不接受模型或外部资料修改。运行时规则见 `dianstar/prompts/system.md` 的“MCP 与 Git 查询”；具体配置和边界见 [MCP 接入](./MCP接入.md)。pull、merge 和 worktree 属于后续阶段。
 
 <!-- 待实现后补充。 -->
 

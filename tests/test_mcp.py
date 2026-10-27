@@ -14,16 +14,22 @@ from unittest.mock import AsyncMock, patch
 
 from mcp.types import CallToolResult, TextContent, Tool
 
-from dianstar.deepseek import _tool_arguments, _parse_unparsed_tool_calls
-from dianstar.agent import ask_deepseek
-from dianstar.config import save_api_key
-from dianstar.loop import Observation, ToolAction, run_loop
-from dianstar.mcp_client import (MCPTools, MCPUnavailable, StdioConnection, adapted_schema,
-                                 github_sources, server_parameters)
-from dianstar.mcp_config import MCPSettings, load_mcp_settings, normalize, save_mcp_settings
-from dianstar.mcp_git_server import GitReader
-from dianstar.permissions import Authorization, ToolGateway, valid_arguments
-from dianstar.source_evidence import SourceEvidence
+from dianstar.providers.deepseek import _tool_arguments, _parse_unparsed_tool_calls
+from dianstar.app.runtime import run_turn
+from dianstar.config.credentials import save_api_key
+from dianstar.core.types import Observation, ToolAction
+from dianstar.core.loop import run_loop
+from dianstar.tools.mcp.client import MCPTools
+from dianstar.tools.mcp.connection import MCPUnavailable, StdioConnection
+from dianstar.tools.mcp.schemas import adapted_schema
+from dianstar.tools.mcp.github_adapter import github_sources
+from dianstar.tools.mcp.launch import server_parameters
+from dianstar.config.mcp import MCPSettings, load_mcp_settings, normalize, save_mcp_settings
+from dianstar.tools.mcp.servers.git.reader import GitReader
+from dianstar.security.authorization import Authorization
+from dianstar.security.gateway import ToolGateway
+from dianstar.security.validation import valid_arguments
+from dianstar.evidence.source_evidence import SourceEvidence
 
 
 def schema(properties, required=()):
@@ -277,7 +283,7 @@ class GitMCPAcceptance(unittest.IsolatedAsyncioTestCase):
         result = await GitReader([self.repo]).execute("status", str(self.repo))
         self.assertEqual(result["error"], "git_configuration_denied")
 
-    @patch("dianstar.deepseek.AsyncOpenAI")
+    @patch("dianstar.providers.deepseek.AsyncOpenAI")
     async def test_agent_drives_real_mcp_and_keeps_roles_and_typed_arguments(self, factory):
         from tests.test_permissions import call, reply
         env = self.root / ".env"
@@ -288,7 +294,7 @@ class GitMCPAcceptance(unittest.IsolatedAsyncioTestCase):
             call("mcp_git__git_diff", {"repository": str(self.repo), "staged": False}),
             reply("已查询工作区差异。")])
         history = []
-        self.assertEqual(await ask_deepseek("看看已配置仓库的修改", env_file=env, history=history), "已查询工作区差异。")
+        self.assertEqual(await run_turn("看看已配置仓库的修改", env_file=env, history=history), "已查询工作区差异。")
         outputs = [json.loads(item["content"]) for item in history if item["role"] == "tool"]
         self.assertEqual(outputs[0]["servers"]["git"]["state"], "connected")
         self.assertIn("+new content", outputs[1]["content"])

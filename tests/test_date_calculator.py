@@ -8,13 +8,13 @@ from types import SimpleNamespace
 import unittest
 from unittest.mock import AsyncMock, patch
 
-from dianstar.agent import ask_deepseek
-from dianstar.deepseek import _parse_unparsed_tool_calls
-from dianstar.tools.date_calculator import DATE_TOOL, DateCalculationError, calculate_date
-from dianstar.tools.weather import WEATHER_TOOL
-from dianstar.tools.number_calculator import NUMBER_TOOL
-from dianstar.tools.web import SEARCH_TOOL, FETCH_TOOL
-from dianstar.tools.web_access import WEB_ACCESS_STATUS_TOOL as WEB_ACCESS_TOOL
+from dianstar.app.runtime import run_turn
+from dianstar.providers.deepseek import _parse_unparsed_tool_calls
+from dianstar.tools.local.date_calculator import DATE_TOOL, DateCalculationError, calculate_date
+from dianstar.tools.local.weather import WEATHER_TOOL
+from dianstar.tools.local.number_calculator import NUMBER_TOOL
+from dianstar.tools.local.web import SEARCH_TOOL, FETCH_TOOL
+from dianstar.tools.local.web_access import WEB_ACCESS_STATUS_TOOL as WEB_ACCESS_TOOL
 
 
 class DateCalculatorTests(unittest.TestCase):
@@ -50,7 +50,7 @@ class DateCalculatorTests(unittest.TestCase):
 
     def test_same_instant_can_be_different_dates_in_different_timezones(self):
         instant = dt.datetime(2026, 1, 1, 0, 30, tzinfo=dt.timezone.utc)
-        with patch("dianstar.tools.date_calculator.dt.datetime") as clock:
+        with patch("dianstar.tools.local.date_calculator.dt.datetime") as clock:
             clock.now.return_value = instant
             shanghai = calculate_date("info", timezone="Asia/Shanghai")
             los_angeles = calculate_date("info", timezone="America/Los_Angeles")
@@ -61,7 +61,7 @@ class DateCalculatorTests(unittest.TestCase):
 
     def test_relative_dates_and_default_add_date(self):
         instant = dt.datetime(2026, 12, 31, 12, tzinfo=dt.timezone.utc)
-        with patch("dianstar.tools.date_calculator.dt.datetime") as clock:
+        with patch("dianstar.tools.local.date_calculator.dt.datetime") as clock:
             clock.now.return_value = instant
             for word, expected in (("yesterday", "2026-12-30"), ("today", "2026-12-31"),
                                    ("tomorrow", "2027-01-01")):
@@ -71,7 +71,7 @@ class DateCalculatorTests(unittest.TestCase):
 
     def test_local_timezone_is_default_and_day_offsets_are_not_hour_offsets(self):
         instant = dt.datetime(2026, 1, 1, 0, 30, tzinfo=dt.timezone(dt.timedelta(hours=8)))
-        with patch("dianstar.tools.date_calculator.dt.datetime") as clock:
+        with patch("dianstar.tools.local.date_calculator.dt.datetime") as clock:
             clock.now.return_value = instant
             local = calculate_date("info")
         self.assertEqual(local["timezone"], "local")
@@ -81,7 +81,7 @@ class DateCalculatorTests(unittest.TestCase):
 
     def test_dst_offset_comes_from_selected_timezone(self):
         instant = dt.datetime(2026, 7, 1, 12, tzinfo=dt.timezone.utc)
-        with patch("dianstar.tools.date_calculator.dt.datetime") as clock:
+        with patch("dianstar.tools.local.date_calculator.dt.datetime") as clock:
             clock.now.return_value = instant
             result = calculate_date("info", timezone="America/New_York")
         self.assertEqual(result["reference_utc_offset"], "-0400")
@@ -130,7 +130,7 @@ class DateCalculatorTests(unittest.TestCase):
 
 
 class DateToolLoopTests(unittest.IsolatedAsyncioTestCase):
-    @patch("dianstar.deepseek.AsyncOpenAI")
+    @patch("dianstar.providers.deepseek.AsyncOpenAI")
     async def test_registry_advertises_and_dispatches_dates_and_model_can_correct_errors(self, client_class):
         def call(call_id, arguments):
             return SimpleNamespace(id=call_id, function=SimpleNamespace(
@@ -154,7 +154,7 @@ class DateToolLoopTests(unittest.IsolatedAsyncioTestCase):
         with tempfile.TemporaryDirectory() as temporary:
             env_file = Path(temporary) / ".env"
             env_file.write_text("DEEPSEEK_API_KEY=fake-test-key\n", encoding="utf-8")
-            answer = await ask_deepseek("计算日期", env_file=env_file, history=history)
+            answer = await run_turn("计算日期", env_file=env_file, history=history)
         requests = client.chat.completions.create.await_args_list
         self.assertEqual(requests[0].kwargs["tools"], [WEATHER_TOOL, DATE_TOOL, NUMBER_TOOL, WEB_ACCESS_TOOL, SEARCH_TOOL, FETCH_TOOL])
         self.assertIn("calculate_date", requests[0].kwargs["messages"][0]["content"])

@@ -7,8 +7,8 @@ from types import SimpleNamespace
 import unittest
 from unittest.mock import AsyncMock, patch
 
-from dianstar.agent import ask_deepseek
-from dianstar.prompts import ASSISTANT_INSTRUCTIONS, build_system_prompt
+from dianstar.app.runtime import run_turn
+from dianstar.prompts.builder import ASSISTANT_INSTRUCTIONS, build_system_prompt
 
 
 class PromptTests(unittest.TestCase):
@@ -23,9 +23,9 @@ class PromptTests(unittest.TestCase):
 
 
 class PromptRequestTests(unittest.IsolatedAsyncioTestCase):
-    @patch("dianstar.prompts.datetime")
-    @patch("dianstar.agent.get_weather", new_callable=AsyncMock)
-    @patch("dianstar.deepseek.AsyncOpenAI")
+    @patch("dianstar.prompts.builder.datetime")
+    @patch("dianstar.tools.local.registry.get_weather", new_callable=AsyncMock)
+    @patch("dianstar.providers.deepseek.AsyncOpenAI")
     async def test_next_question_refreshes_day_but_tool_loop_keeps_its_snapshot(
         self, client_class, weather, clock,
     ):
@@ -48,9 +48,9 @@ class PromptRequestTests(unittest.IsolatedAsyncioTestCase):
         with tempfile.TemporaryDirectory() as temporary:
             env_file = Path(temporary) / ".env"
             env_file.write_text("DEEPSEEK_API_KEY=fake-test-key\n", encoding="utf-8")
-            await ask_deepseek("北京今天天气？", env_file=env_file, history=history)
+            await run_turn("北京今天天气？", env_file=env_file, history=history)
             first_turn_history = [message.copy() for message in history]
-            await ask_deepseek("今天几号？", env_file=env_file, history=history)
+            await run_turn("今天几号？", env_file=env_file, history=history)
 
         requests = client.chat.completions.create.await_args_list
         self.assertEqual(len(requests), 3)

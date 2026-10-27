@@ -15,10 +15,11 @@ from textual.geometry import Offset
 from textual.selection import Selection
 from textual.widgets import Button, Label, RichLog, Static
 
-from dianstar.conversations import Conversation
-from dianstar.rabbit_art import rabbit_lines
-from dianstar.tui import ChatInput, ChatLog, CopyMenu, DianStarApp
-from dianstar.welcome_art import welcome_art_lines
+from dianstar.sessions.conversations import Conversation
+from dianstar.ui.tui.art.rabbit import rabbit_lines
+from dianstar.ui.tui.widgets import ChatInput, ChatLog, CopyMenu
+from dianstar.ui.tui.app import DianStarApp
+from dianstar.ui.tui.art.welcome import welcome_art_lines
 
 
 class ChatSelectionTests(unittest.TestCase):
@@ -277,7 +278,7 @@ class TuiTests(unittest.IsolatedAsyncioTestCase):
             conversation = Conversation.create(Path(temporary))
             app = DianStarApp(conversation)
             message = "第一行\n\n  保留缩进的第二行\n<document>外部材料</document>\n"
-            with patch("dianstar.tui.ask_deepseek", new_callable=AsyncMock,
+            with patch("dianstar.ui.tui.app.run_turn", new_callable=AsyncMock,
                        return_value="已收到完整内容。") as ask:
                 async with app.run_test() as pilot:
                     field = app.query_one("#input", ChatInput)
@@ -298,7 +299,7 @@ class TuiTests(unittest.IsolatedAsyncioTestCase):
     async def test_newline_keys_edit_without_submitting(self):
         with tempfile.TemporaryDirectory() as temporary:
             app = DianStarApp(Conversation.create(Path(temporary)))
-            with patch("dianstar.tui.ask_deepseek", new_callable=AsyncMock) as ask:
+            with patch("dianstar.ui.tui.app.run_turn", new_callable=AsyncMock) as ask:
                 async with app.run_test() as pilot:
                     await pilot.press("a", "shift+enter", "b", "ctrl+j", "c")
                     self.assertEqual(app.query_one("#input", ChatInput).text, "a\nb\nc")
@@ -307,7 +308,7 @@ class TuiTests(unittest.IsolatedAsyncioTestCase):
     async def test_clipboard_paste_keeps_multiple_lines_without_sending(self):
         with tempfile.TemporaryDirectory() as temporary:
             app = DianStarApp(Conversation.create(Path(temporary)))
-            with patch("dianstar.tui.ask_deepseek", new_callable=AsyncMock) as ask:
+            with patch("dianstar.ui.tui.app.run_turn", new_callable=AsyncMock) as ask:
                 async with app.run_test() as pilot:
                     app.copy_to_clipboard("第一段\n第二段")
                     await pilot.press("ctrl+v")
@@ -317,7 +318,7 @@ class TuiTests(unittest.IsolatedAsyncioTestCase):
     async def test_submit_while_busy_keeps_the_multiline_draft(self):
         with tempfile.TemporaryDirectory() as temporary:
             app = DianStarApp(Conversation.create(Path(temporary)))
-            with patch("dianstar.tui.ask_deepseek", new_callable=AsyncMock) as ask:
+            with patch("dianstar.ui.tui.app.run_turn", new_callable=AsyncMock) as ask:
                 async with app.run_test() as pilot:
                     app.busy = True
                     app.post_message(Paste("下一条问题\n补充说明"))
@@ -331,7 +332,7 @@ class TuiTests(unittest.IsolatedAsyncioTestCase):
             conversation = Conversation.create(Path(temporary))
             app = DianStarApp(conversation)
             message = "/new\n这是要讨论的文本"
-            with patch("dianstar.tui.ask_deepseek", new_callable=AsyncMock,
+            with patch("dianstar.ui.tui.app.run_turn", new_callable=AsyncMock,
                        return_value="已分析文本。") as ask:
                 async with app.run_test() as pilot:
                     field = app.query_one("#input", ChatInput)
@@ -429,7 +430,7 @@ class TuiTests(unittest.IsolatedAsyncioTestCase):
                 on_thinking("")
                 return "第一段第二段"
 
-            with patch("dianstar.tui.ask_deepseek", side_effect=answer_later):
+            with patch("dianstar.ui.tui.app.run_turn", side_effect=answer_later):
                 async with app.run_test() as pilot:
                     app.query_one("#input", ChatInput).text = "测试流式输出"
                     await pilot.press("enter")
@@ -488,7 +489,7 @@ class TuiTests(unittest.IsolatedAsyncioTestCase):
                 on_thinking(f"第{turns}轮工具后思考")
                 return f"第{turns}轮回答"
 
-            with patch("dianstar.tui.ask_deepseek", side_effect=answer):
+            with patch("dianstar.ui.tui.app.run_turn", side_effect=answer):
                 async with app.run_test() as pilot:
                     for question in ("第一问", "第二问"):
                         app.query_one("#input", ChatInput).text = question
@@ -526,7 +527,7 @@ class TuiTests(unittest.IsolatedAsyncioTestCase):
             async def failed(question, *, history, on_stream, on_thinking, **kwargs):
                 on_thinking("已收到的部分思考")
                 raise ValueError("测试失败")
-            with patch("dianstar.tui.ask_deepseek", side_effect=failed):
+            with patch("dianstar.ui.tui.app.run_turn", side_effect=failed):
                 async with app.run_test() as pilot:
                     app.query_one("#input", ChatInput).text = "失败问题"
                     await pilot.press("enter")
@@ -584,7 +585,7 @@ class TuiTests(unittest.IsolatedAsyncioTestCase):
         with tempfile.TemporaryDirectory() as temporary:
             conversation = Conversation.create(Path(temporary))
             app = DianStarApp(conversation)
-            with patch("dianstar.tui.ask_deepseek", new_callable=AsyncMock, return_value="你好！"):
+            with patch("dianstar.ui.tui.app.run_turn", new_callable=AsyncMock, return_value="你好！"):
                 async with app.run_test() as pilot:
                     await pilot.pause()
                     self.assertGreater(len(app.query_one("#chat", RichLog).lines), 5)

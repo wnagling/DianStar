@@ -7,14 +7,14 @@ from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import AsyncMock, patch
 
-from dianstar.agent import ask_deepseek
-from dianstar.config import save_api_key
-from dianstar.conversations import Conversation
-from dianstar.search_config import load_search_settings, save_search_settings
-from dianstar.tools.web import FETCH_TOOL, SEARCH_TOOL, WebTools
-from dianstar.tools.web_access import WEB_ACCESS_STATUS_TOOL as WEB_ACCESS_TOOL, manage_web_access
-from dianstar.tui import DianStarApp
-from dianstar.web_approval import PaidWebApproval
+from dianstar.app.runtime import run_turn
+from dianstar.config.credentials import save_api_key
+from dianstar.sessions.conversations import Conversation
+from dianstar.config.search import load_search_settings, save_search_settings
+from dianstar.tools.local.web import FETCH_TOOL, SEARCH_TOOL, WebTools
+from dianstar.tools.local.web_access import WEB_ACCESS_STATUS_TOOL as WEB_ACCESS_TOOL, manage_web_access
+from dianstar.ui.tui.app import DianStarApp
+from dianstar.ui.tui.screens.web_approval import PaidWebApproval
 
 
 class WebAccessTests(unittest.IsolatedAsyncioTestCase):
@@ -90,14 +90,14 @@ class WebAccessTests(unittest.IsolatedAsyncioTestCase):
             env = Path(temporary) / '.env'
             result = await manage_web_access('../../other', env_file=env)
             self.assertEqual(result['error'], 'invalid_web_access_action')
-            with patch('dianstar.tools.web_access.save_search_settings', side_effect=OSError('sensitive detail')):
+            with patch('dianstar.tools.local.web_access.save_search_settings', side_effect=OSError('sensitive detail')):
                 result = await manage_web_access('deny', env_file=env)
             self.assertEqual(result['error'], 'web_access_save_failed')
             self.assertNotIn('sensitive detail', json.dumps(result))
             self.assertNotIn('saved', result)
             self.assertFalse((env.parent / '.local/search.json').exists())
 
-    @patch('dianstar.deepseek.AsyncOpenAI')
+    @patch('dianstar.providers.deepseek.AsyncOpenAI')
     async def test_direct_revocation_is_applied_before_research_and_consent_is_turn_scoped(self, client_class):
         def response(name=None, arguments=None):
             message = SimpleNamespace(content='已恢复询问' if name is None else None,
@@ -123,18 +123,18 @@ class WebAccessTests(unittest.IsolatedAsyncioTestCase):
         with tempfile.TemporaryDirectory() as temporary:
             env = Path(temporary) / '.env'
             save_api_key('fake-key', env)
-            from dianstar.tools.web_reader import WebError
+            from dianstar.tools.local.web_reader import WebError
             async def fetch(service, url):
                 if service._provider == 'free':
                     raise WebError('empty_page', '无正文')
                 return {'content':'正文'}
             approve = AsyncMock(return_value='turn')
             with patch.object(WebTools, 'fetch', new=fetch):
-                await ask_deepseek('撤销始终允许', env_file=env, on_paid_web=approve)
+                await run_turn('撤销始终允许', env_file=env, on_paid_web=approve)
             self.assertEqual(approve.await_count, 1)
             self.assertEqual(load_search_settings(env.parent / '.local/search.json').paid_policy, 'ask')
 
-    @patch('dianstar.deepseek.AsyncOpenAI')
+    @patch('dianstar.providers.deepseek.AsyncOpenAI')
     async def test_disabled_web_can_be_enabled_by_tool_then_read_in_same_question(self, client_class):
         first = SimpleNamespace(choices=[SimpleNamespace(finish_reason='tool_calls', message=SimpleNamespace(content=None,
             tool_calls=[SimpleNamespace(id='enable', function=SimpleNamespace(name='manage_web_access', arguments='{"action":"enable"}'))]))])
@@ -149,7 +149,7 @@ class WebAccessTests(unittest.IsolatedAsyncioTestCase):
             path = env.parent / '.local/search.json'
             save_search_settings('disabled', 'current', path=path, env_file=env, config_file=path.with_name('config.json'))
             with patch.object(WebTools, 'fetch', new=AsyncMock(return_value={'content':'正文'})) as fetch:
-                answer = await ask_deepseek('开启网页访问并读取示例页面', env_file=env, on_permission=AsyncMock(return_value=True))
+                answer = await run_turn('开启网页访问并读取示例页面', env_file=env, on_permission=AsyncMock(return_value=True))
             self.assertEqual(answer, '已启用并读取')
             fetch.assert_awaited_once()
             self.assertNotIn('tools', create.await_args_list[0].kwargs)
@@ -158,7 +158,7 @@ class WebAccessTests(unittest.IsolatedAsyncioTestCase):
             self.assertIn(FETCH_TOOL, updated)
             self.assertEqual(load_search_settings(path).provider, 'auto')
 
-    @patch('dianstar.deepseek.AsyncOpenAI')
+    @patch('dianstar.providers.deepseek.AsyncOpenAI')
     async def test_disable_denies_already_queued_read_without_network(self, client_class):
         calls = [SimpleNamespace(id='disable', function=SimpleNamespace(name='manage_web_access', arguments='{"action":"disable"}')),
                  SimpleNamespace(id='read', function=SimpleNamespace(name='read_webpage', arguments='{"url":"https://example.com"}'))]
@@ -169,7 +169,7 @@ class WebAccessTests(unittest.IsolatedAsyncioTestCase):
             env = Path(temporary) / '.env'
             save_api_key('fake-key', env)
             with patch.object(WebTools, 'fetch', new=AsyncMock()) as fetch:
-                await ask_deepseek('关闭网页访问', env_file=env)
+                await run_turn('关闭网页访问', env_file=env)
             fetch.assert_not_awaited()
             request = create.await_args_list[-1].kwargs
             self.assertIn(WEB_ACCESS_TOOL, request['tools'])

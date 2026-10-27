@@ -8,11 +8,11 @@ from unittest.mock import AsyncMock
 
 import httpx
 
-from dianstar.config import save_api_key
-from dianstar.search_config import SearchSettings
-from dianstar.tools.web import WebTools
-from dianstar.tools.web_search import filter_search_noise, parse_so
-from dianstar.tools.web_reader import WebError
+from dianstar.config.credentials import save_api_key
+from dianstar.config.search import SearchSettings
+from dianstar.tools.local.web import WebTools
+from dianstar.tools.local.web_search import filter_search_noise, parse_so
+from dianstar.tools.local.web_reader import WebError
 
 
 SO_RESULT = '''<!DOCTYPE html><html><title>Search</title><ul>

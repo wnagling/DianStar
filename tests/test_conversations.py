@@ -7,7 +7,7 @@ import time
 import unittest
 from pathlib import Path
 
-from dianstar.conversations import Conversation, list_conversations
+from dianstar.sessions.conversations import Conversation, list_conversations
 
 
 class ConversationNameTests(unittest.TestCase):

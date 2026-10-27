@@ -6,10 +6,10 @@ from unittest.mock import patch
 from dotenv import dotenv_values
 from textual.widgets import Checkbox, Input, Static, TextArea
 
-from dianstar.conversations import Conversation
-from dianstar.mcp_config import load_mcp_settings
-from dianstar.mcp_ui import MCPConfigScreen
-from dianstar.tui import DianStarApp
+from dianstar.sessions.conversations import Conversation
+from dianstar.config.mcp import load_mcp_settings
+from dianstar.ui.tui.screens.mcp import MCPConfigScreen
+from dianstar.ui.tui.app import DianStarApp
 
 
 class MCPUITests(unittest.IsolatedAsyncioTestCase):
@@ -34,7 +34,7 @@ class MCPUITests(unittest.IsolatedAsyncioTestCase):
                 screen.query_one("#mcp-git-write-enabled", Checkbox).value = True
                 screen.query_one("#mcp-git-repos", TextArea).text = str(root)
                 screen.query_one("#mcp-github-token", Input).value = "fixture-github-token"
-                with patch("dianstar.mcp_ui.MCPTools") as tools:
+                with patch("dianstar.ui.tui.screens.mcp.MCPTools") as tools:
                     button = screen.query_one("#mcp-save")
                     button.scroll_visible(animate=False)
                     await pilot.pause()

@@ -11,14 +11,15 @@ from unittest.mock import AsyncMock, patch
 
 from textual.widgets import Static
 
-from dianstar.config import save_api_key
-from dianstar.agent import ask_deepseek
-from dianstar.conversations import Conversation
-from dianstar.search_config import SearchSettings, load_search_settings
-from dianstar.tools.web import MAX_PAID_WEB_CALLS, MAX_WEB_OPERATIONS, WebTools
-from dianstar.tools.web_reader import WebError, extract_page
-from dianstar.tui import ChatInput, DianStarApp
-from dianstar.web_approval import PaidWebApproval
+from dianstar.config.credentials import save_api_key
+from dianstar.app.runtime import run_turn
+from dianstar.sessions.conversations import Conversation
+from dianstar.config.search import SearchSettings, load_search_settings
+from dianstar.tools.local.web import MAX_PAID_WEB_CALLS, MAX_WEB_OPERATIONS, WebTools
+from dianstar.tools.local.web_reader import WebError, extract_page
+from dianstar.ui.tui.widgets import ChatInput
+from dianstar.ui.tui.app import DianStarApp
+from dianstar.ui.tui.screens.web_approval import PaidWebApproval
 
 
 class FallbackTests(unittest.IsolatedAsyncioTestCase):
@@ -115,7 +116,7 @@ class FallbackTests(unittest.IsolatedAsyncioTestCase):
                     fetch.assert_not_awaited()
             approve.assert_not_awaited()
 
-    @patch('dianstar.deepseek.AsyncOpenAI')
+    @patch('dianstar.providers.deepseek.AsyncOpenAI')
     async def test_model_can_explore_thirty_free_pages_then_continue_thirty_paid_requests(self, client_class):
         step = 0
         async def model(**kwargs):
@@ -139,7 +140,7 @@ class FallbackTests(unittest.IsolatedAsyncioTestCase):
             save_api_key('fake-key',env)
             approve = AsyncMock(return_value='turn')
             with patch.object(WebTools,'fetch',new=fetch):
-                answer = await ask_deepseek('核对多个必要来源',env_file=env,on_paid_web=approve)
+                answer = await run_turn('核对多个必要来源',env_file=env,on_paid_web=approve)
             self.assertEqual(answer,'已核对资料')
             self.assertEqual(step,61)
             approve.assert_awaited_once()
@@ -253,7 +254,7 @@ class FallbackTests(unittest.IsolatedAsyncioTestCase):
                         await task
                 self.assertEqual(service.paid_calls,0)
 
-    @patch('dianstar.deepseek.AsyncOpenAI')
+    @patch('dianstar.providers.deepseek.AsyncOpenAI')
     async def test_search_failure_then_free_official_page_success_answers_without_prompt(self, client_class):
         def call(name,args,identifier):
             return SimpleNamespace(choices=[SimpleNamespace(finish_reason='tool_calls',message=SimpleNamespace(content=None,
@@ -268,11 +269,11 @@ class FallbackTests(unittest.IsolatedAsyncioTestCase):
             approve=AsyncMock()
             with patch.object(WebTools,'search',new=AsyncMock(side_effect=WebError('search_low_relevance','无关结果'))), \
                  patch.object(WebTools,'fetch',new=AsyncMock(return_value={'provider':'free','content':'官方教程'})):
-                answer=await ask_deepseek('找 Python 官方教程',env_file=env,on_paid_web=approve)
+                answer=await run_turn('找 Python 官方教程',env_file=env,on_paid_web=approve)
             self.assertEqual(answer,'已找到官方教程')
             approve.assert_not_awaited()
 
-    @patch('dianstar.deepseek.AsyncOpenAI')
+    @patch('dianstar.providers.deepseek.AsyncOpenAI')
     async def test_model_loop_can_read_thirty_pages_then_answer(self, client_class):
         replies = [SimpleNamespace(choices=[SimpleNamespace(finish_reason='tool_calls',
             message=SimpleNamespace(content=None, tool_calls=[SimpleNamespace(id=f'call-{index}',
@@ -284,7 +285,7 @@ class FallbackTests(unittest.IsolatedAsyncioTestCase):
             env = Path(temporary) / '.env'
             save_api_key('fake-key',env)
             with patch.object(WebTools,'fetch',new=AsyncMock(return_value={'content':'正文'})) as fetch:
-                answer = await ask_deepseek('阅读资料后汇总',env_file=env)
+                answer = await run_turn('阅读资料后汇总',env_file=env)
             self.assertEqual(answer,'已汇总30页')
             self.assertEqual(fetch.await_count,30)
             self.assertEqual(client_class.return_value.chat.completions.create.await_count,31)
@@ -317,7 +318,7 @@ class ApprovalUITests(unittest.IsolatedAsyncioTestCase):
                 kwargs['on_thinking']('核对网页来源并整理资料')
                 choices.append(await on_paid_web({'operation':'读取网页','target':'https://example.com', 'remaining_calls':3}))
                 return '已取得内容'
-            with patch('dianstar.tui.ask_deepseek', side_effect=answer):
+            with patch('dianstar.ui.tui.app.run_turn', side_effect=answer):
                 async with app.run_test(size=(80,24)) as pilot:
                     app.query_one('#input', ChatInput).text = '阅读这篇文章'
                     await pilot.press('enter')

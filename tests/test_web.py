@@ -13,15 +13,15 @@ from unittest.mock import AsyncMock, patch
 import httpx
 from textual.widgets import ListView, Select, Static
 
-from dianstar.agent import ask_deepseek
-from dianstar.config import create_key_profile, load_model_settings, save_api_key
-from dianstar.config_ui import ConfigScreen
-from dianstar.conversations import Conversation
-from dianstar.search_config import SearchSettings, load_search_settings, save_search_settings
-from dianstar.tools.web import FETCH_TOOL, SEARCH_TOOL, MAX_WEB_OPERATIONS, WebTools, _filter_obvious_search_noise
-from dianstar.tools.web_reader import (MAX_BYTES, MAX_CONTENT, PUBLIC_DNS_URL, PinnedTLSContext, WebError, extract_page,
-                                       pinned_url, public_get, public_url)
-from dianstar.tui import DianStarApp
+from dianstar.app.runtime import run_turn
+from dianstar.config.models import create_key_profile, load_model_settings
+from dianstar.config.credentials import save_api_key
+from dianstar.ui.tui.screens.config import ConfigScreen
+from dianstar.sessions.conversations import Conversation
+from dianstar.config.search import SearchSettings, load_search_settings, save_search_settings
+from dianstar.tools.local.web import FETCH_TOOL, SEARCH_TOOL, MAX_WEB_OPERATIONS, WebTools, _filter_obvious_search_noise
+from dianstar.tools.local.web_reader import MAX_BYTES, MAX_CONTENT, PUBLIC_DNS_URL, PinnedTLSContext, WebError, extract_page, pinned_url, public_get, public_url
+from dianstar.ui.tui.app import DianStarApp
 
 
 class SearchConfigTests(unittest.TestCase):
@@ -61,8 +61,8 @@ class ReaderTests(unittest.IsolatedAsyncioTestCase):
                 ({'SSL_CERT_DIR':'custom-ca'}, {'capath':'custom-ca'})]:
             context = ssl.SSLContext(ssl.PROTOCOL_TLS_CLIENT)
             with patch.dict('os.environ', environment, clear=True), \
-                    patch('dianstar.tools.web.PinnedTLSContext') as factory, \
-                    patch('dianstar.tools.web.httpx.AsyncClient') as client:
+                    patch('dianstar.tools.local.web.PinnedTLSContext') as factory, \
+                    patch('dianstar.tools.local.web.httpx.AsyncClient') as client:
                 factory.return_value = context_mock = unittest.mock.Mock(wraps=context)
                 context_mock.load_verify_locations = unittest.mock.Mock()
                 service = WebTools(SearchSettings(), Path('unused'))
@@ -149,7 +149,7 @@ class ReaderTests(unittest.IsolatedAsyncioTestCase):
                 self.assertEqual(wrap.call_args.kwargs['server_hostname'], 'proxy.example.net')
             return httpx.Response(200, text='page')
         async with httpx.AsyncClient(transport=httpx.MockTransport(respond)) as client:
-            with patch('dianstar.tools.web_reader.pinned_url', new=AsyncMock(return_value=httpx.URL('https://93.184.216.34'))):
+            with patch('dianstar.tools.local.web_reader.pinned_url', new=AsyncMock(return_value=httpx.URL('https://93.184.216.34'))):
                 await public_get(client, 'https://example.com')
         with patch('ssl.SSLContext.wrap_bio', return_value=None) as wrap:
             context.wrap_bio(None, None, server_hostname='93.184.216.34')
@@ -211,7 +211,7 @@ class ReaderTests(unittest.IsolatedAsyncioTestCase):
             calls.append(request)
             return httpx.Response(302, headers={'location': 'http://127.0.0.1/secret'})
         async with httpx.AsyncClient(transport=httpx.MockTransport(respond)) as client:
-            with patch('dianstar.tools.web_reader.pinned_url', new=AsyncMock(return_value=httpx.URL('https://93.184.216.34'))):
+            with patch('dianstar.tools.local.web_reader.pinned_url', new=AsyncMock(return_value=httpx.URL('https://93.184.216.34'))):
                 with self.assertRaises(WebError):
                     await public_get(client, 'https://example.com')
         self.assertEqual(len(calls), 1)
@@ -253,7 +253,7 @@ class WebToolTests(unittest.IsolatedAsyncioTestCase):
         body = '<rss><channel><item><title>标题</title><link>https://example.com/a</link><description>摘要</description></item><item><title>私网</title><link>http://127.0.0.1</link></item></channel></rss>'
         with tempfile.TemporaryDirectory() as temporary:
             async with await self.tool('free', lambda r: httpx.Response(200, text=body), Path(temporary)) as service:
-                with patch('dianstar.tools.web_reader.pinned_url', new=AsyncMock(side_effect=lambda url, **kwargs: url)):
+                with patch('dianstar.tools.local.web_reader.pinned_url', new=AsyncMock(side_effect=lambda url, **kwargs: url)):
                     result = await service.execute('search_web', {'query': '测试', 'count': '2'})
         self.assertEqual(len(result['results']), 1)
         self.assertEqual(result['results'][0]['title'], '标题')
@@ -292,7 +292,7 @@ class WebToolTests(unittest.IsolatedAsyncioTestCase):
             return httpx.Response(200, text='<!DOCTYPE html><html><title>Captcha verification</title>captcha</html>')
         with tempfile.TemporaryDirectory() as temporary:
             async with await self.tool('free', respond, Path(temporary)) as service:
-                with patch('dianstar.tools.web_reader.pinned_url', new=AsyncMock(side_effect=lambda url, **kwargs: url)):
+                with patch('dianstar.tools.local.web_reader.pinned_url', new=AsyncMock(side_effect=lambda url, **kwargs: url)):
                     result = await service.execute('search_web', {'query': 'test'})
         self.assertEqual(result['error'], 'search_blocked')
         self.assertEqual(len(calls), 2)
@@ -356,7 +356,7 @@ class WebToolTests(unittest.IsolatedAsyncioTestCase):
         body = '<main><p>' + '内容' * MAX_CONTENT + '</p></main>'
         with tempfile.TemporaryDirectory() as temporary:
             async with await self.tool('free', lambda r: httpx.Response(200, text=body, headers={'content-type': 'text/html'}), Path(temporary)) as service:
-                with patch('dianstar.tools.web_reader.pinned_url', new=AsyncMock(side_effect=lambda url, **kwargs: url)):
+                with patch('dianstar.tools.local.web_reader.pinned_url', new=AsyncMock(side_effect=lambda url, **kwargs: url)):
                     result = await service.execute('read_webpage', {'url': 'https://example.com/a'})
         self.assertTrue(result['truncated'])
         self.assertTrue(result['untrusted'])
@@ -401,8 +401,8 @@ class WebToolTests(unittest.IsolatedAsyncioTestCase):
 
 
 class WebIntegrationTests(unittest.IsolatedAsyncioTestCase):
-    @patch('dianstar.deepseek.AsyncOpenAI')
-    @patch('dianstar.agent.WebTools.execute', new_callable=AsyncMock)
+    @patch('dianstar.providers.deepseek.AsyncOpenAI')
+    @patch('dianstar.app.runtime.WebTools.execute', new_callable=AsyncMock)
     async def test_registry_search_fetch_roundtrip_preserves_sources_and_model(self, execute, client_class):
         def action(name, args, call_id):
             return SimpleNamespace(choices=[SimpleNamespace(finish_reason='tool_calls', message=SimpleNamespace(
@@ -418,7 +418,7 @@ class WebIntegrationTests(unittest.IsolatedAsyncioTestCase):
             env = Path(temporary) / '.env'
             save_api_key('fake-model-key', env)
             history = []
-            answer = await ask_deepseek('查资料', env_file=env, history=history)
+            answer = await run_turn('查资料', env_file=env, history=history)
         requests = client.chat.completions.create.await_args_list
         self.assertIn(SEARCH_TOOL, requests[0].kwargs['tools'])
         self.assertIn(FETCH_TOOL, requests[0].kwargs['tools'])
@@ -426,7 +426,7 @@ class WebIntegrationTests(unittest.IsolatedAsyncioTestCase):
         self.assertIn('https://example.com/a', answer)
         self.assertEqual([m['tool_call_id'] for m in history if m['role'] == 'tool'], ['search', 'fetch'])
 
-    @patch('dianstar.deepseek.AsyncOpenAI')
+    @patch('dianstar.providers.deepseek.AsyncOpenAI')
     async def test_disabled_web_tools_not_advertised(self, client_class):
         client_class.return_value.chat.completions.create = AsyncMock(return_value=SimpleNamespace(
             choices=[SimpleNamespace(finish_reason='stop', message=SimpleNamespace(content='你好'))]))
@@ -435,7 +435,7 @@ class WebIntegrationTests(unittest.IsolatedAsyncioTestCase):
             save_api_key('fake-key', root / '.env')
             save_search_settings('disabled', 'primary', path=root / '.local/search.json',
                                  config_file=root / '.local/config.json', env_file=root / '.env')
-            await ask_deepseek('你好', env_file=root / '.env')
+            await run_turn('你好', env_file=root / '.env')
         tools = client_class.return_value.chat.completions.create.await_args.kwargs['tools']
         self.assertNotIn(SEARCH_TOOL, tools)
         self.assertNotIn(FETCH_TOOL, tools)

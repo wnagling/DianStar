@@ -9,15 +9,16 @@ import tempfile
 import unittest
 from unittest.mock import AsyncMock
 from textual.containers import VerticalScroll
-from dianstar.conversations import Conversation
-from dianstar.permission_approval import PermissionApproval
-from dianstar.tui import DianStarApp
+from dianstar.sessions.conversations import Conversation
+from dianstar.ui.tui.screens.permission_approval import PermissionApproval
+from dianstar.ui.tui.app import DianStarApp
 
-from dianstar.git_operations import GitWorkspace
-from dianstar.loop import ToolAction
-from dianstar.mcp_client import MCPTools
-from dianstar.mcp_config import MCPSettings
-from dianstar.permissions import Authorization, ToolGateway
+from dianstar.tools.mcp.servers.git.operations import GitWorkspace
+from dianstar.core.types import ToolAction
+from dianstar.tools.mcp.client import MCPTools
+from dianstar.config.mcp import MCPSettings
+from dianstar.security.authorization import Authorization
+from dianstar.security.gateway import ToolGateway
 
 
 class GitFixture:

@@ -2,7 +2,8 @@
 
 import unittest
 
-from dianstar.loop import Observation, ToolAction, run_loop
+from dianstar.core.types import Observation, ToolAction
+from dianstar.core.loop import run_loop
 
 class LoopTests(unittest.IsolatedAsyncioTestCase):
     async def test_model_final_answer_returns_without_answer_verifier(self):

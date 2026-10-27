@@ -4,14 +4,15 @@ import unittest
 from pathlib import Path
 from unittest.mock import AsyncMock, PropertyMock, patch
 
-from dianstar.clipboard import copy_windows_text
-from dianstar.context_menu import WindowsCopyMenuClient
-from dianstar.conversations import Conversation
-from dianstar.tui import ChatLog, CopyMenu, DianStarApp
+from dianstar.platform.windows.clipboard import copy_windows_text
+from dianstar.platform.windows.context_menu import WindowsCopyMenuClient
+from dianstar.sessions.conversations import Conversation
+from dianstar.ui.tui.widgets import ChatLog, CopyMenu
+from dianstar.ui.tui.app import DianStarApp
 
 
 class ClipboardTests(unittest.TestCase):
-    @patch("dianstar.clipboard.subprocess.run")
+    @patch("dianstar.platform.windows.clipboard.subprocess.run")
     def test_unicode_and_shell_characters_are_passed_as_data(self, run):
         text = '中文答案\n$env:PATH; $(exit); "quoted"\n'
         copy_windows_text(text)
@@ -26,7 +27,7 @@ class ClipboardTests(unittest.TestCase):
 
 
 class ClipboardUiTests(unittest.IsolatedAsyncioTestCase):
-    @patch("dianstar.context_menu.asyncio.create_subprocess_exec", new_callable=AsyncMock)
+    @patch("dianstar.platform.windows.context_menu.asyncio.create_subprocess_exec", new_callable=AsyncMock)
     async def test_native_menu_receives_only_coordinates_and_reports_choice(self, create):
         from unittest.mock import Mock
         process = create.return_value
@@ -52,7 +53,7 @@ class ClipboardUiTests(unittest.IsolatedAsyncioTestCase):
             await client.show((420, 250))
         process.kill.assert_called_once()
 
-    @patch("dianstar.context_menu.asyncio.create_subprocess_exec", new_callable=AsyncMock)
+    @patch("dianstar.platform.windows.context_menu.asyncio.create_subprocess_exec", new_callable=AsyncMock)
     async def test_cancel_closes_native_menu_process(self, create):
         import asyncio
         from unittest.mock import Mock
@@ -68,7 +69,7 @@ class ClipboardUiTests(unittest.IsolatedAsyncioTestCase):
         process.kill.assert_called_once()
         process.wait.assert_awaited_once()
 
-    @patch("dianstar.context_menu.asyncio.create_subprocess_exec", new_callable=AsyncMock)
+    @patch("dianstar.platform.windows.context_menu.asyncio.create_subprocess_exec", new_callable=AsyncMock)
     async def test_failed_warmup_can_retry_without_reusing_broken_protocol(self, create):
         from unittest.mock import Mock
         first, second = Mock(), Mock()
@@ -100,9 +101,9 @@ class ClipboardUiTests(unittest.IsolatedAsyncioTestCase):
                 chat = app.query_one("#chat", ChatLog)
                 app.screen.selections = {chat: Selection(Offset(0, 1), Offset(4, 1))}
                 original_selection = dict(app.screen.selections)
-                with patch("dianstar.tui.os.name", "nt"), patch.object(
+                with patch("dianstar.ui.tui.app.os.name", "nt"), patch.object(
                     DianStarApp, "is_headless", new_callable=PropertyMock, return_value=False
-                ), patch("dianstar.tui.cursor_position", return_value=(420, 250)), patch.object(
+                ), patch("dianstar.ui.tui.app.cursor_position", return_value=(420, 250)), patch.object(
                     app._native_menu, "show", return_value="copy"
                 ) as native, patch.object(app, "copy_to_clipboard") as copy:
                     await pilot.mouse_down(chat, offset=(18, 4), button=3)
@@ -134,9 +135,9 @@ class ClipboardUiTests(unittest.IsolatedAsyncioTestCase):
             app = DianStarApp(Conversation.create(Path(temporary)))
             async with app.run_test() as pilot:
                 await pilot.pause()
-                with patch("dianstar.tui.os.name", "nt"), patch.object(
+                with patch("dianstar.ui.tui.app.os.name", "nt"), patch.object(
                     DianStarApp, "is_headless", new_callable=PropertyMock, return_value=False
-                ), patch("dianstar.tui.copy_windows_text") as native, patch.object(app, "_status") as status:
+                ), patch("dianstar.ui.tui.app.copy_windows_text") as native, patch.object(app, "_status") as status:
                     app.copy_to_clipboard("中文答案")
                     native.assert_called_once_with("中文答案")
                     self.assertEqual(app.clipboard, "中文答案")

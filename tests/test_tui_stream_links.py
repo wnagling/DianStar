@@ -11,9 +11,10 @@ from textual.events import Click
 from textual.geometry import Offset
 from textual.selection import Selection
 
-from dianstar.chat_rendering import ChatMarkdown, StreamLines
-from dianstar.conversations import Conversation
-from dianstar.tui import ChatInput, ChatLog, DianStarApp
+from dianstar.ui.tui.rendering import ChatMarkdown, StreamLines
+from dianstar.sessions.conversations import Conversation
+from dianstar.ui.tui.widgets import ChatInput, ChatLog
+from dianstar.ui.tui.app import DianStarApp
 
 
 class StreamLinkTests(unittest.IsolatedAsyncioTestCase):
@@ -100,7 +101,7 @@ class StreamLinkTests(unittest.IsolatedAsyncioTestCase):
             urls = ['https://docs.python.org/3/tutorial/index.html#intro',
                     'https://example.com/news', 'https://arxiv.org/abs/2402.06363']
             app.conversation.add_exchange('链接', f'[官方教程]({urls[0]})\n\n{urls[1]}\n\n来源核验（`{urls[2]}`）：已读摘要页。')
-            with patch('dianstar.tui.webbrowser.open', return_value=True) as browser:
+            with patch('dianstar.ui.tui.app.webbrowser.open', return_value=True) as browser:
                 async with app.run_test(size=(100, 30)) as pilot:
                     await pilot.pause()
                     chat = app.query_one('#chat', ChatLog)
@@ -116,7 +117,7 @@ class StreamLinkTests(unittest.IsolatedAsyncioTestCase):
             app = self.app(Path(temporary))
             url = 'https://example.com/article'
             app.conversation.add_exchange('链接', f'[这段文字可以选择]({url})')
-            with patch('dianstar.tui.webbrowser.open', return_value=True) as browser:
+            with patch('dianstar.ui.tui.app.webbrowser.open', return_value=True) as browser:
                 async with app.run_test(size=(100, 30)) as pilot:
                     await pilot.pause()
                     chat = app.query_one('#chat', ChatLog)
@@ -149,7 +150,7 @@ class StreamLinkTests(unittest.IsolatedAsyncioTestCase):
                 on_stream(second)
                 await finish.wait()
                 return second
-            with patch('dianstar.tui.ask_deepseek', side_effect=answer):
+            with patch('dianstar.ui.tui.app.run_turn', side_effect=answer):
                 async with app.run_test(size=(90, 25)) as pilot:
                     app.query_one('#input', ChatInput).text = '写一篇长回答'
                     await pilot.press('enter')
@@ -183,7 +184,7 @@ class StreamLinkTests(unittest.IsolatedAsyncioTestCase):
                 chat = app.query_one('#chat',ChatLog)
                 chat.clear()
                 app._welcome_only = False
-                with patch('dianstar.tui.ChatMarkdown', wraps=ChatMarkdown) as markdown, \
+                with patch('dianstar.ui.tui.chat_view.ChatMarkdown', wraps=ChatMarkdown) as markdown, \
                         patch.object(app,'_paint_stream',wraps=app._paint_stream) as paint:
                     content = ''
                     for i in range(200):

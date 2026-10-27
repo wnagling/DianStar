@@ -11,12 +11,13 @@ from dotenv import dotenv_values
 from textual.widgets import Button, Input, ListView, Select, Static
 from rich.cells import cell_len
 
-from dianstar.config import (create_key_profile, cycle_model, delete_key_profile, load_model_settings, save_api_key,
-                              save_model_settings, set_default_key, validate_shortcut)
-from dianstar.agent import ask_deepseek
-from dianstar.config_ui import ConfigScreen
-from dianstar.conversations import Conversation
-from dianstar.tui import ChatInput, DianStarApp
+from dianstar.config.models import create_key_profile, cycle_model, delete_key_profile, load_model_settings, save_model_settings, set_default_key, validate_shortcut
+from dianstar.config.credentials import save_api_key
+from dianstar.app.runtime import run_turn
+from dianstar.ui.tui.screens.config import ConfigScreen
+from dianstar.sessions.conversations import Conversation
+from dianstar.ui.tui.widgets import ChatInput
+from dianstar.ui.tui.app import DianStarApp
 
 
 class ConfigTests(unittest.TestCase):
@@ -90,7 +91,7 @@ class ConfigTests(unittest.TestCase):
             create_key_profile("新 Key", "new-fake-key", path=root / ".local" / "config.json",
                                env_file=root / ".env")
             with self.assertRaisesRegex(ValueError, "尚未添加模型"):
-                asyncio.run(ask_deepseek("你好", env_file=root / ".env"))
+                asyncio.run(run_turn("你好", env_file=root / ".env"))
 
     def test_multiple_keys_keep_separate_models_and_migrate_old_config(self):
         with tempfile.TemporaryDirectory() as temporary:
@@ -176,7 +177,7 @@ class ConfigTuiTests(unittest.IsolatedAsyncioTestCase):
                 self.assertEqual(load_model_settings(config).default_key_id, 'primary')
                 self.assertEqual(app.conversation.messages, [])
 
-    @patch('dianstar.deepseek.AsyncOpenAI')
+    @patch('dianstar.providers.deepseek.AsyncOpenAI')
     async def test_cycled_key_and_model_both_reach_next_sdk_request(self, client_class):
         with tempfile.TemporaryDirectory() as temporary:
             root = Path(temporary)
@@ -188,7 +189,7 @@ class ConfigTuiTests(unittest.IsolatedAsyncioTestCase):
             cycle_model(config, env_file=env)
             client_class.return_value.chat.completions.create = AsyncMock(return_value=SimpleNamespace(
                 choices=[SimpleNamespace(finish_reason='stop', message=SimpleNamespace(content='你好'))]))
-            await ask_deepseek('你好', env_file=env)
+            await run_turn('你好', env_file=env)
             self.assertEqual(client_class.call_args.kwargs['api_key'], 'fake-second')
             self.assertEqual(client_class.return_value.chat.completions.create.await_args.kwargs['model'], 'deepseek-flash')
 
@@ -350,7 +351,7 @@ class ConfigTuiTests(unittest.IsolatedAsyncioTestCase):
                 self.assertEqual(load_model_settings(config_file).default_key_id, "primary")
                 self.assertIsNone(dotenv_values(env_file).get("DEEPSEEK_API_KEY_KEY2"))
 
-    @patch("dianstar.deepseek.AsyncOpenAI")
+    @patch("dianstar.providers.deepseek.AsyncOpenAI")
     async def test_request_uses_default_keys_own_model(self, client_class):
         with tempfile.TemporaryDirectory() as temporary:
             root = Path(temporary)
@@ -365,7 +366,7 @@ class ConfigTuiTests(unittest.IsolatedAsyncioTestCase):
             client.chat.completions.create = AsyncMock(return_value=SimpleNamespace(
                 choices=[SimpleNamespace(finish_reason="stop",
                                          message=SimpleNamespace(content="你好"))]))
-            self.assertEqual(await ask_deepseek("你好", env_file=env_file), "你好")
+            self.assertEqual(await run_turn("你好", env_file=env_file), "你好")
             self.assertEqual(client_class.call_args.kwargs["api_key"], "second-fake-key")
             self.assertEqual(client.chat.completions.create.await_args.kwargs["model"], "my-model")
 
@@ -449,7 +450,7 @@ class ConfigTuiTests(unittest.IsolatedAsyncioTestCase):
                 self.assertNotIsInstance(app.screen, ConfigScreen)
                 self.assertFalse(config_file.exists())
 
-    @patch("dianstar.deepseek.AsyncOpenAI")
+    @patch("dianstar.providers.deepseek.AsyncOpenAI")
     async def test_selected_model_reaches_sdk_request(self, client_class):
         with tempfile.TemporaryDirectory() as temporary:
             root = Path(temporary)
@@ -460,7 +461,7 @@ class ConfigTuiTests(unittest.IsolatedAsyncioTestCase):
             client.chat.completions.create = AsyncMock(return_value=SimpleNamespace(
                 choices=[SimpleNamespace(finish_reason="stop",
                                          message=SimpleNamespace(content="你好"))]))
-            self.assertEqual(await ask_deepseek("你好", env_file=root / ".env"), "你好")
+            self.assertEqual(await run_turn("你好", env_file=root / ".env"), "你好")
             self.assertEqual(client.chat.completions.create.await_args.kwargs["model"],
                              "deepseek-chat")
 

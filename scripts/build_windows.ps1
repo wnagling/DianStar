@@ -25,6 +25,7 @@ try {
     & $venvPython -m PyInstaller `
         --noconfirm --clean --onedir --console --name DianStar `
         --collect-data dianstar `
+        --hidden-import dianstar.tools.mcp.servers.git.server `
         --distpath $distRoot `
         --workpath (Join-Path $runRoot 'work') `
         --specpath (Join-Path $runRoot 'spec') `

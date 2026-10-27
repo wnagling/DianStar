@@ -5,7 +5,7 @@ import unittest
 
 from rich.console import Console
 
-from dianstar.__main__ import _print_answer
+from dianstar.ui.cli import _print_answer
 
 
 class DisplayTests(unittest.TestCase):

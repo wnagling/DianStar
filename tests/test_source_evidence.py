@@ -7,10 +7,10 @@ from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import AsyncMock, patch
 
-from dianstar.agent import ask_deepseek
-from dianstar.config import save_api_key
-from dianstar.conversations import Conversation
-from dianstar.source_evidence import SourceEvidence, canonical_url, cited_urls, page_evidence
+from dianstar.app.runtime import run_turn
+from dianstar.config.credentials import save_api_key
+from dianstar.sessions.conversations import Conversation
+from dianstar.evidence.source_evidence import SourceEvidence, canonical_url, cited_urls, page_evidence
 
 
 class SourceEvidenceTests(unittest.TestCase):
@@ -108,8 +108,8 @@ url = "https://example.com/fenced"
 
 
 class EvidenceIntegrationTests(unittest.IsolatedAsyncioTestCase):
-    @patch('dianstar.deepseek.AsyncOpenAI')
-    @patch('dianstar.agent.WebTools.execute', new_callable=AsyncMock)
+    @patch('dianstar.providers.deepseek.AsyncOpenAI')
+    @patch('dianstar.app.runtime.WebTools.execute', new_callable=AsyncMock)
     async def test_metadata_reaches_model_and_checked_answer_preserves_tool_history(self, execute, client_class):
         def call(name, args, identifier):
             return SimpleNamespace(choices=[SimpleNamespace(finish_reason='tool_calls', message=SimpleNamespace(content=None,
@@ -119,14 +119,14 @@ class EvidenceIntegrationTests(unittest.IsolatedAsyncioTestCase):
                      SimpleNamespace(choices=[SimpleNamespace(finish_reason='stop', message=SimpleNamespace(
                          content='[论文](https://arxiv.org/abs/2402.06363) [未知来源](https://example.com/fake)'))])]
         # 走与流式输出相同的决策处理，检查完成后会更新可见文本。
-        with patch('dianstar.deepseek.DeepSeekSession._stream_completion', new=AsyncMock(side_effect=responses)):
+        with patch('dianstar.providers.deepseek.DeepSeekSession._stream_completion', new=AsyncMock(side_effect=responses)):
             execute.side_effect = [{'results':[{'url':'https://arxiv.org/abs/2402.06363','summary':'摘要'}]},
                                    {'url':'https://arxiv.org/abs/2402.06363','content':'Abstract only'}]
             with tempfile.TemporaryDirectory() as temporary:
                 env = Path(temporary)/'.env'
                 save_api_key('fake-key',env)
                 history, updates = [], []
-                answer = await ask_deepseek('查询论文并核对来源',env_file=env,history=history,on_stream=updates.append)
+                answer = await run_turn('查询论文并核对来源',env_file=env,history=history,on_stream=updates.append)
                 conversation = Conversation.create(Path(temporary)/'conversations')
                 conversation.add_exchange('查询论文并核对来源', answer, model_turn_messages=history)
                 restored = Conversation.load(conversation.id, conversation.directory)

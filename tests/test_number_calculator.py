@@ -6,9 +6,9 @@ from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import AsyncMock, patch
 
-from dianstar.agent import ask_deepseek
-from dianstar.deepseek import _parse_unparsed_tool_calls
-from dianstar.tools.number_calculator import NUMBER_TOOL, NumberCalculationError, calculate_number
+from dianstar.app.runtime import run_turn
+from dianstar.providers.deepseek import _parse_unparsed_tool_calls
+from dianstar.tools.local.number_calculator import NUMBER_TOOL, NumberCalculationError, calculate_number
 
 
 class NumberCalculatorTests(unittest.TestCase):
@@ -83,7 +83,7 @@ class NumberCalculatorTests(unittest.TestCase):
 
 
 class NumberToolLoopTests(unittest.IsolatedAsyncioTestCase):
-    @patch("dianstar.deepseek.AsyncOpenAI")
+    @patch("dianstar.providers.deepseek.AsyncOpenAI")
     async def test_registered_tool_error_can_be_corrected_in_same_turn(self, client_class):
         def response(expression, call_id):
             call = SimpleNamespace(id=call_id, function=SimpleNamespace(
@@ -100,7 +100,7 @@ class NumberToolLoopTests(unittest.IsolatedAsyncioTestCase):
         with tempfile.TemporaryDirectory() as temporary:
             env_file = Path(temporary) / ".env"
             env_file.write_text("DEEPSEEK_API_KEY=fake-test-key\n", encoding="utf-8")
-            answer = await ask_deepseek("计算数字", env_file=env_file, history=history)
+            answer = await run_turn("计算数字", env_file=env_file, history=history)
         requests = create.await_args_list
         self.assertIn(NUMBER_TOOL, requests[0].kwargs["tools"])
         self.assertIn("calculate_number", requests[0].kwargs["messages"][0]["content"])

@@ -100,7 +100,7 @@ DS
 | [System Prompt 蓝图](./docs/system_prompt_blueprint.md) | 提示词目标设计，不参与运行时请求 |
 | [近期测试记录](./docs/测试记录-2026-10-25-表达与复制.md) | 表达、选择复制、输入和思考框的验证范围 |
 
-运行时提示词位于 [`dianstar/system_prompt.md`](./dianstar/system_prompt.md)，修改后重启生效；程序在每轮提问开始时注入本机当天日期。便携版需重新构建才能应用源码提示词变更。
+运行时提示词位于 [`dianstar/prompts/system.md`](./dianstar/prompts/system.md)，修改后重启生效；程序在每轮提问开始时注入本机当天日期。便携版需重新构建才能应用源码提示词变更。
 
 ## 开发与测试
 
