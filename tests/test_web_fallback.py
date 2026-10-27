@@ -117,21 +117,29 @@ class FallbackTests(unittest.IsolatedAsyncioTestCase):
             approve.assert_not_awaited()
 
     @patch('dianstar.providers.deepseek.AsyncOpenAI')
-    async def test_model_can_explore_thirty_free_pages_then_continue_thirty_paid_requests(self, client_class):
+    async def test_model_can_batch_thirty_free_pages_then_thirty_paid_requests(self, client_class):
         step = 0
         async def model(**kwargs):
             nonlocal step
             step += 1
-            if step > 60:
+            if step > 12:
                 return SimpleNamespace(choices=[SimpleNamespace(finish_reason='stop',message=SimpleNamespace(content='已核对资料'))])
-            args = {'url':f'https://example.com/{(step-1)%30}'}
-            if step > 30:
-                results = [json.loads(m['content']) for m in kwargs['messages'] if m['role']=='tool']
-                args['api_fallback'] = results[step-31]['api_fallback']
+            # Six batches of five free reads, then six batches of five continuations.
+            results = [json.loads(m['content']) for m in kwargs['messages'] if m['role']=='tool']
+            start = ((step - 1) % 6) * 5
+            calls = []
+            for index in range(start, start + 5):
+                args = {'url':f'https://example.com/{index}'}
+                if step > 6:
+                    args['api_fallback'] = results[index]['api_fallback']
+                calls.append(SimpleNamespace(id=f'{step}-{index}', function=SimpleNamespace(
+                    name='read_webpage', arguments=json.dumps(args))))
             return SimpleNamespace(choices=[SimpleNamespace(finish_reason='tool_calls',message=SimpleNamespace(content=None,
-                tool_calls=[SimpleNamespace(id=str(step),function=SimpleNamespace(name='read_webpage',arguments=json.dumps(args)))]))])
+                tool_calls=calls))])
         client_class.return_value.chat.completions.create = AsyncMock(side_effect=model)
+        visited = []
         async def fetch(service, url):
+            visited.append((service._provider, url))
             if service._provider == 'free':
                 raise WebError('empty_page', '未取得正文')
             return {'provider':'deepseek', 'content':'正文'}
@@ -142,7 +150,9 @@ class FallbackTests(unittest.IsolatedAsyncioTestCase):
             with patch.object(WebTools,'fetch',new=fetch):
                 answer = await run_turn('核对多个必要来源',env_file=env,on_paid_web=approve)
             self.assertEqual(answer,'已核对资料')
-            self.assertEqual(step,61)
+            self.assertEqual(step,13)
+            self.assertEqual(visited, [(provider, f'https://example.com/{index}')
+                                      for provider in ('free', 'deepseek') for index in range(30)])
             approve.assert_awaited_once()
 
     async def test_thirty_free_failures_then_thirty_paid_continuations_have_independent_budgets(self):
@@ -274,11 +284,12 @@ class FallbackTests(unittest.IsolatedAsyncioTestCase):
             approve.assert_not_awaited()
 
     @patch('dianstar.providers.deepseek.AsyncOpenAI')
-    async def test_model_loop_can_read_thirty_pages_then_answer(self, client_class):
+    async def test_model_loop_can_batch_thirty_pages_then_answer_on_sixteenth_step(self, client_class):
         replies = [SimpleNamespace(choices=[SimpleNamespace(finish_reason='tool_calls',
             message=SimpleNamespace(content=None, tool_calls=[SimpleNamespace(id=f'call-{index}',
-                function=SimpleNamespace(name='read_webpage', arguments=json.dumps({'url':f'https://example.com/{index}'})))]))])
-            for index in range(30)]
+                function=SimpleNamespace(name='read_webpage', arguments=json.dumps({'url':f'https://example.com/{index}'})))
+                for index in range(start, start + 2)]))])
+            for start in range(0, 30, 2)]
         replies.append(SimpleNamespace(choices=[SimpleNamespace(finish_reason='stop',message=SimpleNamespace(content='已汇总30页'))]))
         client_class.return_value.chat.completions.create = AsyncMock(side_effect=replies)
         with tempfile.TemporaryDirectory() as temporary:
@@ -288,7 +299,7 @@ class FallbackTests(unittest.IsolatedAsyncioTestCase):
                 answer = await run_turn('阅读资料后汇总',env_file=env)
             self.assertEqual(answer,'已汇总30页')
             self.assertEqual(fetch.await_count,30)
-            self.assertEqual(client_class.return_value.chat.completions.create.await_count,31)
+            self.assertEqual(client_class.return_value.chat.completions.create.await_count,16)
 
     def test_challenge_pages_are_not_treated_as_article_content(self):
         for html in ('<html><title>Just a moment...</title><p>Verify you are human</p></html>',

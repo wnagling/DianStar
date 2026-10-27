@@ -84,6 +84,34 @@ class NumberCalculatorTests(unittest.TestCase):
 
 class NumberToolLoopTests(unittest.IsolatedAsyncioTestCase):
     @patch("dianstar.providers.deepseek.AsyncOpenAI")
+    async def test_identical_calls_keep_distinct_results_in_model_history(self, client_class):
+        def tool_reply(call_id):
+            call = SimpleNamespace(id=call_id, function=SimpleNamespace(
+                name="calculate_number", arguments='{"expression":"0.1+0.2"}'))
+            return SimpleNamespace(choices=[SimpleNamespace(finish_reason="tool_calls",
+                message=SimpleNamespace(content=None, tool_calls=[call]))])
+
+        create = client_class.return_value.chat.completions.create = AsyncMock(side_effect=[
+            tool_reply("first"), tool_reply("second"),
+            SimpleNamespace(choices=[SimpleNamespace(finish_reason="stop",
+                message=SimpleNamespace(content="两次计算均为 0.3。"))]),
+        ])
+        history = []
+        with tempfile.TemporaryDirectory() as temporary:
+            env_file = Path(temporary) / ".env"
+            env_file.write_text("DEEPSEEK_API_KEY=fake-test-key\n", encoding="utf-8")
+            answer = await run_turn("重复计算并复核", env_file=env_file, history=history)
+
+        self.assertEqual(create.await_count, 3)
+        tool_results = [message for message in history if message["role"] == "tool"]
+        self.assertEqual([message["tool_call_id"] for message in tool_results], ["first", "second"])
+        self.assertEqual([json.loads(message["content"])["result"] for message in tool_results], ["0.3", "0.3"])
+        last_request = create.await_args_list[-1].kwargs["messages"]
+        self.assertEqual([message["tool_call_id"] for message in last_request if message["role"] == "tool"],
+                         ["first", "second"])
+        self.assertEqual(history[-1]["content"], answer)
+
+    @patch("dianstar.providers.deepseek.AsyncOpenAI")
     async def test_registered_tool_error_can_be_corrected_in_same_turn(self, client_class):
         def response(expression, call_id):
             call = SimpleNamespace(id=call_id, function=SimpleNamespace(

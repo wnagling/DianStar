@@ -17,7 +17,7 @@ from dianstar.core.registry import ToolRegistration
 from dianstar.tools.mcp.client import MCPTools
 from dianstar.tools.mcp.schemas import MCP_STATUS_TOOL
 from dianstar.config.mcp import MCPSettings, load_mcp_settings
-from dianstar.tools.local.web import MAX_WEB_OPERATIONS, MAX_PAID_WEB_CALLS, WebTools
+from dianstar.tools.local.web import WebTools
 
 
 from dianstar.tools.local.registry import build_local_registry
@@ -87,9 +87,8 @@ async def run_turn(
                 session.tools = [entry.schema for entry in tool_registry.values()]
             await apply_permission_intent(question, client, settings.default_model, web,
                 authorization, on_permission, env_file, tool_registry, act_web, session)
-            # 允许逐页阅读到网页操作上限后，再留出决策空间生成最终回答。
-            steps = MAX_WEB_OPERATIONS + MAX_PAID_WEB_CALLS + 4
-            answer = await run_loop(session.think, act, max_steps=steps)
+            # Use the shared ReAct limit, independently of individual tool budgets.
+            answer = await run_loop(session.think, act)
         finally:
             authorization.close()
         checked_answer = evidence.annotate_answer(answer)

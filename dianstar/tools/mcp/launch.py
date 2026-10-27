@@ -6,7 +6,7 @@ from dotenv import dotenv_values
 from mcp import StdioServerParameters
 from dianstar.config.paths import PROJECT_ROOT
 from dianstar.config.mcp import MCPSettings
-from dianstar.tools.mcp.schemas import GITHUB_TOOLS
+from dianstar.tools.mcp.github_contract import READ_TOOLS, WRITE_TOOLS
 
 
 def server_parameters(settings: MCPSettings, env_file: Path) -> dict:
@@ -29,11 +29,13 @@ def server_parameters(settings: MCPSettings, env_file: Path) -> dict:
             raise ValueError("GitHub MCP 程序不存在或不是可执行文件。")
         values = dotenv_values(env_file) if env_file.is_file() else {}
         token = values.get("GITHUB_PERSONAL_ACCESS_TOKEN") or os.environ.get("GITHUB_PERSONAL_ACCESS_TOKEN")
-        env = {**common, "GITHUB_READ_ONLY": "1", "GITHUB_TOOLSETS": "",
-               "GITHUB_TOOLS": ",".join(sorted(GITHUB_TOOLS))}
+        writable = bool(settings.github_write_repositories)
+        selected = ",".join(sorted(READ_TOOLS | (WRITE_TOOLS if writable else set())))
+        env = {**common, "GITHUB_READ_ONLY": "0" if writable else "1", "GITHUB_TOOLSETS": "",
+               "GITHUB_TOOLS": selected}
         if token:
             env["GITHUB_PERSONAL_ACCESS_TOKEN"] = token
         parameters["github"] = StdioServerParameters(command=str(executable),
-            args=["stdio", "--read-only", "--tools", ",".join(sorted(GITHUB_TOOLS))], env=env,
+            args=["stdio", *([] if writable else ["--read-only"]), "--tools", selected], env=env,
             cwd=str(env_file.parent))
     return parameters

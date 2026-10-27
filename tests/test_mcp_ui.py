@@ -33,6 +33,9 @@ class MCPUITests(unittest.IsolatedAsyncioTestCase):
                 screen.query_one("#mcp-git-enabled", Checkbox).value = True
                 screen.query_one("#mcp-git-write-enabled", Checkbox).value = True
                 screen.query_one("#mcp-git-repos", TextArea).text = str(root)
+                screen.query_one("#mcp-github-repos", TextArea).text = "Owner/Repo\nOwner/ReadOnly"
+                screen.query_one("#mcp-github-private-repos", TextArea).text = "Owner/Repo"
+                screen.query_one("#mcp-github-write-repos", TextArea).text = "Owner/Repo"
                 screen.query_one("#mcp-github-token", Input).value = "fixture-github-token"
                 with patch("dianstar.ui.tui.screens.mcp.MCPTools") as tools:
                     button = screen.query_one("#mcp-save")
@@ -45,6 +48,14 @@ class MCPUITests(unittest.IsolatedAsyncioTestCase):
                 self.assertTrue(settings.git_enabled)
                 self.assertTrue(settings.git_write_enabled)
                 self.assertEqual(settings.git_repositories, (str(root),))
+                self.assertEqual(settings.github_repositories, ("owner/repo", "owner/readonly"))
+                self.assertEqual(settings.github_private_repositories, ("owner/repo",))
+                self.assertEqual(settings.github_write_repositories, ("owner/repo",))
+                for identifier in ("mcp-save", "mcp-test", "mcp-back"):
+                    region = screen.query_one("#" + identifier).region
+                    self.assertGreater(region.width, 0)
+                    self.assertLessEqual(region.right, panel.region.right)
+                    self.assertLessEqual(region.bottom, panel.region.bottom)
                 self.assertEqual(dotenv_values(root / ".env")["GITHUB_PERSONAL_ACCESS_TOKEN"], "fixture-github-token")
                 self.assertEqual(screen.query_one("#mcp-github-token", Input).value, "")
                 self.assertNotIn("fixture-github-token", (root / ".local/mcp.json").read_text(encoding="utf-8"))

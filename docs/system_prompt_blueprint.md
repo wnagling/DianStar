@@ -88,7 +88,7 @@
 
 ### 文件访问、代码修改与命令执行
 
-已增加本地 stdio MCP 客户端、Git 查询及第一批工程操作（分支、精确暂存/取消暂存、commit、fetch、push），以及官方 GitHub MCP 的公开仓库只读查询。Git 写操作单独开启并逐次确认；服务和仓库范围由用户配置，不接受模型或外部资料修改。运行时规则见 `dianstar/prompts/system.md` 的“MCP 与 Git 查询”；具体配置和边界见 [MCP 接入](./MCP接入.md)。pull、merge 和 worktree 属于后续阶段。
+已增加本地 stdio MCP 客户端、Git 查询及工程操作（分支、精确暂存/取消暂存、commit、fetch、push），以及官方 GitHub MCP 的仓库浏览、代码/Issue/PR 搜索、CI 查询、PR/Issue 管理与代码审查。GitHub 参数沿用官方定义，私有访问和申请写操作按仓库分别配置；Git/GitHub 写操作逐次展示预览并确认。服务、凭据和仓库范围由用户配置，不接受模型或外部资料修改；超时或写结果不明时先查询，不盲目重试。ReAct 每次提问最多 16 轮，同名同参数可正常再次执行。运行时规则见 `dianstar/prompts/system.md` 的“MCP 与 Git 查询”；具体配置和边界见 [MCP 接入](./MCP接入.md)。pull、merge 和 worktree 属于后续阶段。
 
 <!-- 待实现后补充。 -->
 

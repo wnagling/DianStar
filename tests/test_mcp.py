@@ -105,13 +105,12 @@ class MCPConfigTests(unittest.TestCase):
 
 
 class MCPAsyncTests(unittest.IsolatedAsyncioTestCase):
-    async def test_nested_arguments_work_in_loop_and_duplicate_detection(self):
-        think = AsyncMock(side_effect=[ToolAction("query", {"items": [1, {"a": False}]}), "done"])
-        act = AsyncMock(return_value=Observation(ToolAction("query", {}), {}))
+    async def test_nested_arguments_can_be_repeated_in_the_loop(self):
+        action = ToolAction("query", {"items": [1, {"a": False}]})
+        think = AsyncMock(side_effect=[action, action, "done"])
+        act = AsyncMock(return_value=Observation(action, {}))
         self.assertEqual(await run_loop(think, act), "done")
-        think = AsyncMock(return_value=ToolAction("query", {"items": [1, {"a": False}]}))
-        with self.assertRaisesRegex(ValueError, "repeated"):
-            await run_loop(think, act)
+        self.assertEqual(act.await_count, 2)
 
     async def test_github_scope_and_public_check_precede_call(self):
         settings = MCPSettings(github_repositories=("owner/repo",))

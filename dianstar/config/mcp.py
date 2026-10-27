@@ -20,6 +20,8 @@ class MCPSettings:
     github_executable: str = ""
     github_repositories: tuple[str, ...] = ()
     git_write_enabled: bool = False
+    github_private_repositories: tuple[str, ...] = ()
+    github_write_repositories: tuple[str, ...] = ()
 
 
 def normalize(data: dict) -> MCPSettings:
@@ -45,16 +47,24 @@ def normalize(data: dict) -> MCPSettings:
         if any(part in {".", ".."} for part in repo.split("/")):
             raise ValueError("GitHub 仓库名称无效。")
         names.append(repo.lower())
+    scopes = {}
+    for field in ("github_private_repositories", "github_write_repositories"):
+        values = data.get(field, [])
+        if (not isinstance(values, (list, tuple)) or len(values) > 10
+                or any(not isinstance(value, str) or value.lower() not in names for value in values)):
+            raise ValueError("私有访问和写操作仓库必须属于允许访问的 GitHub 仓库。")
+        scopes[field] = tuple(dict.fromkeys(value.lower() for value in values))
     executable = data.get("github_executable", "")
     if not isinstance(executable, str) or (executable and not Path(executable).is_absolute()):
         raise ValueError("GitHub MCP 程序必须填写绝对路径。")
     if data.get("git_enabled") and not paths:
         raise ValueError("请先指定允许访问的本地仓库。")
     if data.get("github_enabled") and (not executable or not names):
-        raise ValueError("请先指定 GitHub MCP 程序和允许访问的公开仓库。")
+        raise ValueError("请先指定 GitHub MCP 程序和允许访问的仓库。")
     return MCPSettings(data.get("git_enabled", False), tuple(dict.fromkeys(paths)),
                        data.get("github_enabled", False), executable, tuple(dict.fromkeys(names)),
-                       data.get("git_write_enabled", False))
+                       data.get("git_write_enabled", False),
+                       scopes["github_private_repositories"], scopes["github_write_repositories"])
 
 
 def load_mcp_settings(path: Path = MCP_CONFIG_FILE) -> MCPSettings:

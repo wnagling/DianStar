@@ -499,8 +499,12 @@ class ConfigTuiTests(unittest.IsolatedAsyncioTestCase):
                 await pilot.press("down", "enter")
                 self.assertEqual(screen.page, "models")
                 screen.query_one("#model-add-input", Input).value = "deepseek-chat"
-                await pilot.press("enter", "escape")
+                await pilot.press("enter")
+                await pilot.pause()
+                await pilot.press("escape")
+                await pilot.pause()
                 self.assertEqual(screen.page, "menu")
+                self.assertIs(app.focused, menu)
                 await pilot.press("down", "enter")
                 self.assertEqual(screen.page, "default")
                 screen.query_one("#default-list", ListView).index = 2

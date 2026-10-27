@@ -17,7 +17,10 @@ def valid_arguments(schema: dict, arguments: dict) -> bool:
         if len(payload) > 32768:
             return False
         Draft202012Validator.check_schema(parameters)
-        return Draft202012Validator(parameters, registry=Registry()).is_valid(arguments) and nonempty_strings(arguments)
+        # GitHub's official update schemas allow empty text (e.g. clearing a PR
+        # body). Its repository and query policy is checked by the adapter.
+        official_github = schema["function"].get("name", "").startswith("mcp_github__")
+        return Draft202012Validator(parameters, registry=Registry()).is_valid(arguments) and (official_github or nonempty_strings(arguments))
     except (KeyError, TypeError, ValueError, RecursionError, SchemaError, Unresolvable):
         return False
 
