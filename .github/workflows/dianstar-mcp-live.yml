@@ -1,0 +1,21 @@
+name: DianStar MCP temporary integration
+
+on:
+  pull_request:
+    branches: [main]
+    paths:
+      - '.github/workflows/dianstar-mcp-live.yml'
+      - 'mcp-integration/README.md'
+
+permissions:
+  contents: read
+
+jobs:
+  mcp-live-smoke:
+    runs-on: ubuntu-latest
+    timeout-minutes: 2
+    steps:
+      - name: Print integration marker
+        run: printf 'DIANSTAR_MCP_LIVE_20261028\n'
+      - name: Confirm temporary workflow
+        run: printf 'Temporary integration only. No checkout, secrets, deployment or main changes.\n'
