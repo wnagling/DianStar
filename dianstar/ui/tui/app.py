@@ -26,6 +26,7 @@ from dianstar.platform.windows.context_menu import WindowsCopyMenuClient, cursor
 from dianstar.config.paths import CONFIG_FILE, ENV_FILE
 from dianstar.config.models import cycle_model, load_model_settings
 from dianstar.ui.tui.screens.config import ConfigScreen
+from dianstar.ui.tui.screens.github_account import GitHubAccountScreen
 from dianstar.sessions.conversations import Conversation, list_conversations
 from dianstar.ui.tui.screens.web_approval import PaidWebApproval
 from dianstar.config.search import load_search_settings, save_search_settings
@@ -417,6 +418,11 @@ class DianStarApp(ChatView, App[None]):
             elif command == "/config":
                 self.push_screen(ConfigScreen(config_file=self.config_file, env_file=self.env_file),
                                  self._config_closed)
+            elif command == "/github":
+                if argument:
+                    self._status("输入 /github 打开账号页面；请在专用输入框填写令牌。")
+                else:
+                    self.push_screen(GitHubAccountScreen(self.env_file))
             elif command == "/exit":
                 self.exit()
             elif command == "/switch":

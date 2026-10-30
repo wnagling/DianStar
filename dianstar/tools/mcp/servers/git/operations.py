@@ -9,6 +9,7 @@ import secrets
 import shlex
 import shutil
 import subprocess
+import sys
 import tempfile
 import threading
 import time
@@ -18,6 +19,9 @@ from urllib.request import getproxies
 from dianstar.tools.mcp.servers.git.reader import GitReader
 
 from dianstar.tools.mcp.git_contract import READ_TOOLS, WRITE_TOOLS
+from dianstar.security.processes import terminate_tree
+from dianstar.security.content_guard import protected_path, SecurityViolation
+from dianstar.hooks.git import GitSecurityHooks
 
 LABELS = {"git_stage": "暂存指定文件", "git_unstage": "取消指定文件的暂存",
           "git_create_branch": "创建分支", "git_switch_branch": "切换分支",
@@ -35,9 +39,7 @@ def digest(data):
 
 
 def sensitive(path):
-    parts = PurePosixPath(path.lower()).parts
-    return any(part in {".git", ".local", ".aws", ".ssh"} or part.startswith((".env", "credentials", "secrets"))
-               or part.endswith((".pem", ".key")) for part in parts)
+    return protected_path(path)
 
 
 def branch_name(value):
@@ -54,6 +56,10 @@ class GitWorkspace(GitReader):
         self.allow_writes = allow_writes
         self.plans = {}
         self.locks = {str(root): threading.RLock() for root in self.repositories}
+        self.security = GitSecurityHooks(self)
+
+    def _git_dir(self, context):
+        return context[0] / ".git"
 
     def _context(self, repository):
         root = self.check_repository(repository)
@@ -62,7 +68,7 @@ class GitWorkspace(GitReader):
                 "APPDATA", "LOCALAPPDATA", "HOMEDRIVE", "HOMEPATH"}}
         env.update(GIT_CONFIG_NOSYSTEM="1", GIT_CONFIG_GLOBAL=os.devnull, GIT_TERMINAL_PROMPT="0",
                    GIT_OPTIONAL_LOCKS="0", GIT_PAGER="cat", GCM_INTERACTIVE="0")
-        prefix = [self.git, "--git-dir=" + str(root / ".git"), "--work-tree=" + str(root), "--no-pager",
+        prefix = [self.git, "--git-dir=" + str(self._git_dir((root,))), "--work-tree=" + str(root), "--no-pager",
                   "-c", "core.fsmonitor=false", "-c", "core.quotePath=false", "-c", "color.ui=false",
                   "-c", "core.bare=false", "-c", "core.hooksPath=" + os.devnull,
                   "-c", "commit.gpgSign=false", "-c", "maintenance.auto=false", "-c", "gc.auto=0",
@@ -70,7 +76,9 @@ class GitWorkspace(GitReader):
         context = (root, env, prefix)
         keys = self._query(context, ["config", "--local", "--no-includes", "--name-only", "--list"]).decode().lower().splitlines()
         if any(key.startswith(("filter.", "include.", "includeif.", "extensions.worktreeconfig", "extensions.partialclone", "core.splitindex", "url."))
-               or (key.startswith("remote.") and key.endswith((".promisor", ".partialclonefilter"))) for key in keys):
+               or (key.startswith("remote.") and key.endswith((".promisor", ".partialclonefilter")))
+               or (key.startswith("merge.") and key.endswith(".driver"))
+               or (key.startswith("diff.") and key.endswith(".command")) for key in keys):
             raise GitError("git_configuration_denied", "仓库含过滤器、配置包含项、URL 重写或特殊索引配置，未执行。")
         # Preserve trusted user EOL settings without loading their command hooks,
         # filters, aliases or includes into repository operations.
@@ -87,7 +95,8 @@ class GitWorkspace(GitReader):
         return context
 
     @staticmethod
-    def _invoke(context, args, *, optional=False, env_extra=None, network=False):
+    def _invoke(context, args, *, optional=False, env_extra=None, network=False, timeout=None,
+                input_data=None, output_limit=2 * 1024 * 1024):
         root, base_env, prefix = context
         env = {**base_env, **(env_extra or {})}
         if network:
@@ -96,29 +105,43 @@ class GitWorkspace(GitReader):
                     env[scheme.upper() + "_PROXY"] = proxy
             if "SSH_AUTH_SOCK" in os.environ:
                 env["SSH_AUTH_SOCK"] = os.environ["SSH_AUTH_SOCK"]
-        with subprocess.Popen(prefix + args, cwd=root, env=env, stdin=subprocess.DEVNULL,
+        with subprocess.Popen(prefix + args, cwd=root, env=env, stdin=subprocess.PIPE if input_data is not None else subprocess.DEVNULL,
                 stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
-                **({"creationflags": subprocess.CREATE_NO_WINDOW} if os.name == "nt" else {})) as process:
+                **({"creationflags": subprocess.CREATE_NO_WINDOW} if os.name == "nt" else {"start_new_session": True})) as process:
             expired = threading.Event()
             def stop():
                 expired.set()
-                if process.poll() is None:
-                    process.kill()
-            timer = threading.Timer(30 if network else 8, stop)
+                terminate_tree(process)
+            timer = threading.Timer(timeout or (30 if network else 8), stop)
             timer.daemon = True
             timer.start()
+            writer = None
+            if input_data is not None:
+                def send():
+                    try:
+                        process.stdin.write(input_data)
+                    except (BrokenPipeError, OSError):
+                        pass
+                    finally:
+                        try:
+                            process.stdin.close()
+                        except (BrokenPipeError, OSError):
+                            pass
+                writer = threading.Thread(target=send, daemon=True)
+                writer.start()
             output = bytearray()
             try:
                 while chunk := process.stdout.read1(8192):
                     output.extend(chunk)
-                    if len(output) > 2 * 1024 * 1024:
+                    if len(output) > output_limit:
                         stop()
                         break
                 process.wait()
+                if writer is not None:
+                    writer.join(timeout=1)
             finally:
                 timer.cancel()
-                if process.poll() is None:
-                    process.kill()
+                terminate_tree(process)
                 process.wait()
             if expired.is_set():
                 raise GitError("git_outcome_unknown", "Git 超时或输出过大；请先查询当前状态，不要自动重试写操作。")
@@ -142,13 +165,13 @@ class GitWorkspace(GitReader):
             raise GitError("git_detached_head", "当前为 detached HEAD，第一批写操作要求具名分支。")
         return branch_name(value.decode().strip())
 
-    def _files(self, root, files):
+    def _files(self, root, files, *, allow_sensitive=False):
         if not isinstance(files, list) or not 1 <= len(files) <= 100 or len(set(files)) != len(files):
             raise GitError("git_invalid_files", "请明确选择 1–100 个不同文件，不接受目录或全量暂存。")
         for name in files:
             if (not isinstance(name, str) or not name or "\\" in name or any(ord(char) < 32 for char in name)
                     or ":" in name or name.startswith("/") or any(part in {"", ".", ".."} for part in name.split("/"))
-                    or sensitive(name)):
+                    or (sensitive(name) and not allow_sensitive)):
                 raise GitError("git_file_denied", "文件路径越界、格式无效或属于受限敏感路径。")
             path = root / name
             if path.resolve() != path.absolute() or path.is_symlink() or (path.exists() and not path.is_file()):
@@ -158,13 +181,13 @@ class GitWorkspace(GitReader):
     def _state(self, context):
         root = context[0]
         status = self._query(context, ["status", "--porcelain=v1", "-z", "--untracked-files=all", "--ignore-submodules=all"])
-        index = root / ".git/index"
+        index = self._git_dir(context) / "index"
         if index.exists() and (index.is_symlink() or index.resolve() != index.absolute() or index.stat().st_size > 2 * 1024 * 1024):
             raise GitError("git_index_denied", "索引路径或大小超出当前支持范围。")
         index_bytes = index.read_bytes() if index.exists() else b""
-        config = (root / ".git/config").read_bytes()
+        config = (self._git_dir(context) / "config").read_bytes()
         refs = self._query(context, ["for-each-ref", "--format=%(refname) %(objectname)"])
-        markers = [name for name in ("MERGE_HEAD", "CHERRY_PICK_HEAD", "REVERT_HEAD", "rebase-merge", "rebase-apply", "sequencer", "index.lock", "HEAD.lock") if (root / ".git" / name).exists()]
+        markers = [name for name in ("MERGE_HEAD", "CHERRY_PICK_HEAD", "REVERT_HEAD", "rebase-merge", "rebase-apply", "sequencer", "index.lock", "HEAD.lock") if (self._git_dir(context) / name).exists()]
         if markers or self._query(context, ["ls-files", "--unmerged"]):
             raise GitError("git_integration_in_progress", "存在冲突、进行中的整合或 Git 锁，请先处理；未执行。")
         # Hash changed tracked files too: approval must not silently survive edits.
@@ -228,7 +251,7 @@ class GitWorkspace(GitReader):
                 and not parsed.password and not parsed.query and not parsed.fragment):
             return url
         path = Path(url)
-        if path.is_absolute() and path.exists() and path.resolve() == path.absolute():
+        if path.is_absolute() and not url.startswith(("\\\\", "//")) and path.exists() and path.resolve() == path.absolute():
             return str(path)
         raise GitError("git_remote_denied", "仅支持无内嵌密码的 HTTPS、SSH 或明确的本地路径；不支持自定义传输。")
 
@@ -239,6 +262,16 @@ class GitWorkspace(GitReader):
                  "-c", "http.extraHeader=", "-c", "core.askPass=", "-c", "credential.helper=", "-c", "credential.interactive=false"]
         if os.name == "nt":
             extra += ["-c", "credential.helper=manager"]
+        if urlsplit(url).scheme == "https" and urlsplit(url).hostname == "github.com":
+            namespace, login = os.environ.get("DIANSTAR_GITHUB_NAMESPACE", ""), os.environ.get("DIANSTAR_GITHUB_LOGIN", "")
+            if os.environ.get("DIANSTAR_GITHUB_SIGNED_OUT") == "1":
+                extra += ["-c", "credential.helper="]
+            elif re.fullmatch(r"dianstar-[a-f0-9]{32}", namespace) and re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9-]{0,38}", login):
+                env = {**env, "GCM_NAMESPACE": namespace, "GCM_INTERACTIVE": "0",
+                       "GCM_CREDENTIAL_STORE": "wincredman" if os.name == "nt" else "keychain" if sys.platform == "darwin" else "secretservice"}
+                if os.name != "nt":
+                    extra += ["-c", "credential.helper=manager"]
+                extra += ["-c", "credential.username=" + login]
         if url.startswith("ssh://") or re.match(r"[^/]+@[^:]+:", url):
             ssh = shutil.which("ssh")
             if ssh is None:
@@ -283,6 +316,8 @@ class GitWorkspace(GitReader):
 
     @staticmethod
     def _error(error):
+        if isinstance(error, SecurityViolation):
+            return error.result()
         return {"error": getattr(error, "code", "git_operation_failed"),
                 "message": getattr(error, "message", "Git 范围或环境检查失败，未继续执行。")}
 
@@ -303,7 +338,10 @@ class GitWorkspace(GitReader):
         lines = [f"操作：{LABELS[name]}", f"仓库：{root}", f"当前分支：{current}"]
         details = {}
         if name in {"git_stage", "git_unstage"}:
-            paths = self._files(root, arguments.get("files"))
+            paths = self._files(root, arguments.get("files"), allow_sensitive=name == "git_unstage")
+            if name == "git_stage":
+                self.security.hooks.run("before_stage", ((file, (root / file).read_bytes())
+                    for file in arguments["files"] if (root / file).is_file()))
             details["paths"] = paths
             lines += ["文件：" + ", ".join(arguments["files"])]
             patch = self._query(context, ["diff", "--no-ext-diff", "--no-textconv", "--no-color",
@@ -355,8 +393,11 @@ class GitWorkspace(GitReader):
                 raise GitError("git_invalid_message", "提交说明不能为空且最多 4000 字符。")
             staged = self._query(context, ["diff", "--cached", "--name-only", "-z"]).split(b"\0")
             files = [file.decode() for file in staged if file]
-            if not files or any(sensitive(file) for file in files):
+            present = self._query(context, ["diff", "--cached", "--name-only", "--diff-filter=ACMRT", "-z"]).split(b"\0")
+            if not files or any(sensitive(file.decode()) for file in present if file):
                 raise GitError("git_commit_denied", "没有暂存修改，或暂存区包含受限敏感路径。")
+            self.security.index(context)
+            self.security.hooks.run("before_commit", [("[提交说明]", message.encode())])
             identity = self._identity(context)
             details.update(identity=identity, index=index_bytes, head=head, branch=current)
             patch = self._query(context, ["diff", "--cached", "--no-ext-diff", "--no-textconv", "--no-color"]).decode(errors="replace")
@@ -374,16 +415,26 @@ class GitWorkspace(GitReader):
                 if head is None:
                     raise GitError("git_no_commit", "没有可推送的提交。")
                 target = branch_name(arguments.get("branch", current))
+                details["security_remote_head"] = self.security.remote_head(context, url, target)
+                self.security.push(context, head, details["security_remote_head"])
                 details.update(head=head, branch=current, target=target)
+                force = arguments.get("force_with_lease", False)
+                if type(force) is not bool:
+                    raise GitError("git_invalid_arguments", "force_with_lease 必须为布尔值。")
+                if force:
+                    advertised = self._query(self._network_context(context, url), ["ls-remote", "--heads", "--", url, "refs/heads/" + target], network=True).decode().split()
+                    details["lease"] = advertised[0] if advertised else ""
                 tracking = "refs/remotes/" + remote + "/" + target
                 known = self._invoke(context, ["rev-parse", "--verify", tracking], optional=True)[0] == 0
                 commits = self._query(context, ["log", "--format=%h %s", "--max-count=31", (tracking + ".." + head) if known else head]).decode()
                 lines += [f"推送：{current} → refs/heads/{target}", f"本地提交：{head}",
                           "待推送提交（按本地远程跟踪记录估算，最多展示 31 条）：\n" + commits,
                           f"设置上游分支：{arguments.get('set_upstream', False)}", "普通推送，不强制覆盖，不推送其他分支或标签。"]
+                if force:
+                    lines[-1] = f"明确申请 force-with-lease：仅当远程仍为 {details['lease'] or '分支不存在'} 时允许替换历史，不使用无条件强推。"
             else:
                 lines += ["仅获取远程分支到对应跟踪引用，不切换分支、不合并、不删除旧引用。"]
-        description = "\n".join(lines)
+        description = self.security.hooks.scanner.redact("\n".join(lines))
         if len(description) > 24000:
             raise GitError("git_preview_too_large", "待确认内容过长，请缩小暂存或提交范围，不能省略差异后直接批准。")
         self.plans = {token: plan for token, plan in self.plans.items() if plan["expires"] > time.monotonic()}
@@ -412,11 +463,14 @@ class GitWorkspace(GitReader):
         root = context[0]
         result = {"operation": name, "repository": str(root)}
         if name in {"git_stage", "git_unstage"}:
-            self._files(root, args["files"])
+            self._files(root, args["files"], allow_sensitive=name == "git_unstage")
             for file, expected, existed in details["selected"]:
                 path = root / file
                 if path.exists() != existed or digest(path.read_bytes() if path.is_file() else b"") != expected:
                     raise GitError("git_state_changed", "选中文件已改变，未执行。")
+            if name == "git_stage":
+                self.security.hooks.run("before_stage", ((file, (root / file).read_bytes())
+                    for file in args["files"] if (root / file).is_file()))
             command = (["add", "--", *details["paths"]] if name == "git_stage" else
                        ["restore", "--staged", "--source=HEAD", "--", *details["paths"]] if self._head(context) else
                        ["update-index", "--force-remove", "--", *args["files"]])
@@ -432,10 +486,12 @@ class GitWorkspace(GitReader):
                 raise GitError("git_state_changed", "提交身份已改变，未执行。")
             # A private index freezes exactly what the user approved. update-ref
             # compares the old HEAD, so an external commit is never overwritten.
-            with tempfile.TemporaryDirectory(prefix="dianstar-index-", dir=root / ".git") as temporary:
+            with tempfile.TemporaryDirectory(prefix="dianstar-index-", dir=self._git_dir(context)) as temporary:
                 index = Path(temporary) / "index"
                 index.write_bytes(details["index"])
                 tree = self._query(context, ["write-tree"], env_extra={"GIT_INDEX_FILE": str(index)}).decode().strip()
+                self.security.tree(context, tree)
+                self.security.hooks.run("before_commit", [("[提交说明]", args["message"].encode())])
                 prefix = context[2] + ["-c", "user.name=" + details["identity"][0], "-c", "user.email=" + details["identity"][1]]
                 sha = self._query((root, context[1], prefix), ["commit-tree", tree,
                     *(["-p", details["head"]] if details["head"] else []), "-m", args["message"]]).decode().strip()
@@ -452,8 +508,13 @@ class GitWorkspace(GitReader):
                 result["tracking_refs"] = self._query(context, ["for-each-ref", "--format=%(refname:short) %(objectname)",
                     "refs/remotes/" + details["remote"] + "/"]).decode()
             else:
+                if self.security.remote_head(context, details["url"], details["target"]) != details["security_remote_head"]:
+                    raise GitError("git_state_changed", "远程分支在确认期间已变化，请重新检查待推送历史。")
+                self.security.push(context, details["head"], details["security_remote_head"])
                 spec = details["head"] + ":refs/heads/" + details["target"]
-                self._query(network, ["push", "--porcelain", "--no-follow-tags", "--no-verify", "--", details["url"], spec], network=True)
+                self._query(network, ["push", "--porcelain", "--no-follow-tags", "--no-verify",
+                    *(["--force-with-lease=refs/heads/" + details["target"] + ":" + details["lease"]] if "lease" in details else []),
+                    "--", details["url"], spec], network=True)
                 remote = self._query(network, ["ls-remote", "--heads", "--", details["url"], "refs/heads/" + details["target"]], network=True).decode().split()
                 if not remote or remote[0] != details["head"]:
                     raise GitError("git_remote_verification_failed", "推送命令已结束，但远程提交未核验一致；不要自动重推。")

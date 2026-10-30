@@ -6,6 +6,7 @@ from dotenv import dotenv_values
 from dianstar.tools.mcp.schemas import MAX_RESULT
 from dianstar.tools.mcp.github_adapter import github_sources
 from dianstar.tools.mcp.github_contract import SEARCH_TOOLS
+from dianstar.security.content_guard import ContentScanner, known_credentials
 
 
 def search_scope_matches(texts, repositories):
@@ -20,6 +21,8 @@ def search_scope_matches(texts, repositories):
             if not isinstance(item, dict):
                 continue
             repository = item.get("repository")
+            if isinstance(repository, str) and repository.lower() not in allowed:
+                return False
             if isinstance(repository, dict) and isinstance(repository.get("full_name"), str) and repository["full_name"].lower() not in allowed:
                 return False
             for key in ("html_url", "repository_url"):
@@ -37,7 +40,7 @@ def search_scope_matches(texts, repositories):
     return True
 
 
-def normalize_result(result, server, name, arguments, env_file, *, repositories=()):
+def normalize_result(result, server, name, arguments, env_file, *, repositories=(), known_tokens=()):
     if result.isError:
         return {"error": "mcp_tool_failed", "message": "外部工具报告失败，未将错误文本作为成功资料。"}
     text = []
@@ -72,6 +75,10 @@ def normalize_result(result, server, name, arguments, env_file, *, repositories=
     token = os.environ.get("GITHUB_PERSONAL_ACCESS_TOKEN")
     if token:
         content = content.replace(token, "[已遮挡本地密钥]")
+    for token in known_tokens:
+        if token:
+            content = content.replace(token, "[已遮挡本地密钥]")
+    content = ContentScanner(known=known_credentials(env_file, extra=known_tokens)).redact(content)
     return {"server": server, "tool": name, "content": content[:MAX_RESULT],
             "truncated": upstream_truncated or len(content) > MAX_RESULT, "untrusted": True,
             "sources": github_sources(text, arguments, resource_urls, repositories) if server == "github" else [],

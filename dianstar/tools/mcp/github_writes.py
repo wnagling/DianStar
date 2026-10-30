@@ -151,7 +151,7 @@ class GitHubWrites:
             return {"error": "github_preparation_failed"}
         try:
             result = await self.connections["github"].call(name, arguments)
-            normalized = normalize_result(result, "github", name, arguments, self.adapter.env_file)
+            normalized = normalize_result(result, "github", name, arguments, self.adapter.env_file, known_tokens=(self.adapter.token(),))
             if normalized.get("error"):
                 self.uncertain.add(key)
                 return {"error": "github_outcome_unknown", "message": "未得到可核验的写操作结果，请先查询目标状态，不要自动重试。"}

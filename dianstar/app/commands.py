@@ -5,7 +5,8 @@ from dianstar.sessions.conversations import Conversation, list_conversations
 
 COMMANDS = {
     "/help": "显示命令帮助",
-    "/config": "配置 API Key、模型、默认模型和快捷键",
+    "/config": "配置 API Key、模型、快捷键和 GitHub 账号",
+    "/github": "登录、检查或退出 GitHub 账号",
     "/new": "创建新会话",
     "/rename": "重命名当前会话：/rename 名称",
     "/resume": "按名称或 ID 恢复会话：/resume 名称",

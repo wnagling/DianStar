@@ -11,3 +11,5 @@ class ToolRegistration:
     handler: Callable[[ToolAction], Awaitable[Observation]]
     # Only trusted registrations opt into asking. Missing policies fail closed.
     approval_description: Callable[[dict], str | Awaitable[str]] | None = None
+    # Flat, application-owned dependencies for a composite operation.
+    required_tools: tuple[str, ...] = ()

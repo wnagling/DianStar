@@ -17,24 +17,27 @@ from dianstar.tools.mcp.results import normalize_result
 
 
 class MCPTools:
-    def __init__(self, settings: MCPSettings, env_file: Path, authorization: Authorization):
+    def __init__(self, settings: MCPSettings, env_file: Path, authorization: Authorization, *, allow_clone=False, confirm_destinations=False):
         self.settings, self.env_file, self.authorization = settings, env_file, authorization
+        self.allow_clone = allow_clone
+        self.confirm_destinations = confirm_destinations
         self.connections = {}
         self.status = {}
         self.registry = {}
-        self.git = GitAdapter(settings, authorization, self.connections)
+        self.git = GitAdapter(settings, authorization, self.connections, allow_clone=allow_clone, confirm_destinations=confirm_destinations)
         self.github = GitHubAdapter(settings, env_file)
         self.github_writes = GitHubWrites(self.github, authorization, self.connections, self._public_repository)
 
     async def __aenter__(self):
         try:
             try:
-                params = server_parameters(self.settings, self.env_file)
+                params = server_parameters(self.settings, self.env_file, allow_clone=self.allow_clone, confirm_destinations=self.confirm_destinations)
             except (ValueError, OSError):
                 # One invalid executable must not break normal chat or local Git.
                 from dataclasses import replace
-                params = server_parameters(replace(self.settings, github_enabled=False), self.env_file)
-                self.status["github"] = {"state": "unavailable", "message": "请检查 GitHub MCP 程序路径。"}
+                params = server_parameters(replace(self.settings, github_enabled=False), self.env_file,
+                                           allow_clone=self.allow_clone, confirm_destinations=self.confirm_destinations)
+                self.status["github"] = {"state": "unavailable", "message": "GitHub 连接组件不可用，请检查应用安装。"}
             for server, parameters in params.items():
                 connection = StdioConnection(parameters)
                 self.connections[server] = connection
@@ -46,7 +49,8 @@ class MCPTools:
                         if tool.name in seen:
                             raise MCPUnavailable()
                         seen.add(tool.name)
-                        if server == "git" and tool.name in GIT_WRITE_TOOLS and not self.settings.git_write_enabled:
+                        if (server == "git" and tool.name in GIT_WRITE_TOOLS and not self.settings.git_write_enabled
+                                and not (tool.name == "git_clone" and self.allow_clone)):
                             continue
                         if server == "github" and tool.name in GITHUB_WRITE_TOOLS and not self.settings.github_write_repositories:
                             continue
@@ -61,7 +65,9 @@ class MCPTools:
                                 return await self.prepare_git(original, arguments)
                             async def apply(action, original=tool.name):
                                 return Observation(action, await self.apply_git(original, action.arguments))
-                            self.registry[name] = ToolRegistration(schema, f"mcp.git.{tool.name}", apply, prepare)
+                            dependencies = tuple("mcp_git__" + operation for operation in ("git_stage", "git_commit", "git_push")) if tool.name == "git_publish" else ()
+                            self.registry[name] = ToolRegistration(schema, f"mcp.git.{tool.name}", apply, prepare,
+                                                                   required_tools=dependencies)
                         elif server == "github" and tool.name in GITHUB_WRITE_TOOLS:
                             async def prepare(arguments, original=tool.name):
                                 return await self.github_writes.prepare(original, arguments)
@@ -101,19 +107,35 @@ class MCPTools:
             if connection.changed or connection.task is None or connection.task.done():
                 status[server] = {"state": "unavailable", "message": "服务已断开或工具定义已变化；下次提问重新连接。"}
         return {"servers": status,
-                "git_repositories": list(self.settings.git_repositories),
+                "git_repositories": sorted(self.git.repositories),
+                "git_workspace_roots": list(self.settings.git_workspace_roots),
+                "clone_destination_requires_approval": self.allow_clone and not self.settings.git_workspace_roots,
+                "creation_destination_requires_approval": self.confirm_destinations and not self.settings.git_workspace_roots,
                 "github_repositories": list(self.settings.github_repositories),
                 "github_private_repositories": list(self.settings.github_private_repositories),
-                "github_write_repositories": list(self.settings.github_write_repositories),
-                "tools": list(self.registry), "read_only": not ((self.settings.git_enabled and self.settings.git_write_enabled)
+                "github_write_repositories": list(self.settings.github_write_repositories or ()),
+                "github_admin_repositories": list(self.settings.github_admin_repositories or ()),
+                "tools": list(self.registry), "read_only": not ((self.settings.git_enabled and (self.settings.git_write_enabled or self.allow_clone))
                     or (self.settings.github_enabled and self.settings.github_write_repositories)),
+                "git_repository_writes_enabled": self.settings.git_write_enabled,
+                "workspace_writes_enabled": self.settings.workspace_write_enabled,
                 "git_writes_require_approval": True, "github_writes_require_approval": True}
 
     async def prepare_git(self, name, arguments):
         return await self.git.prepare_git(name, arguments)
 
     async def apply_git(self, name, arguments):
-        return await self.git.apply_git(name, arguments)
+        result = await self.git.apply_git(name, arguments)
+        if result.get("success") and (result.get("created_repository") or result.get("removed_repository")):
+            callback = getattr(self, "on_repositories_changed", None)
+            if callback:
+                try:
+                    callback(tuple(sorted(self.git.repositories)))
+                    result["configuration_saved"] = True
+                except (OSError, ValueError):
+                    result["configuration_saved"] = False
+                    result["configuration_warning"] = "操作已执行，但日常配置保存失败；请在配置页接入该仓库。"
+        return result
 
     async def _public_repository(self, owner, repo):
         return await self.github._public_repository(owner, repo)
@@ -130,6 +152,7 @@ class MCPTools:
                 return error
             result = await self.connections[server].call(name, arguments)
             repositories = self.github.repositories(name, arguments) if server == "github" else ()
-            return normalize_result(result, server, name, arguments, self.env_file, repositories=repositories)
+            return normalize_result(result, server, name, arguments, self.env_file, repositories=repositories,
+                known_tokens=(self.github.token(),) if server == "github" else ())
         except (MCPUnavailable, OSError, ValueError, TypeError, TimeoutError, httpx.HTTPError):
             return {"error": "mcp_unavailable", "message": "MCP 查询失败或超时，请检查服务状态。"}

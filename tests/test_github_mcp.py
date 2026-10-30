@@ -64,11 +64,53 @@ class OfficialGitHubSchemaTests(unittest.TestCase):
                 "owner": "owner", "repo": "repo", "pullNumber": 1, "method": method}))
 
 
+class GitHubMetadataTests(unittest.IsolatedAsyncioTestCase):
+    async def test_authenticated_public_metadata_check_still_rejects_private_and_other_repositories(self):
+        adapter = GitHubAdapter(MCPSettings())
+        for payload, expected in (({"full_name": "Owner/Repo", "private": False, "visibility": "public"}, True),
+                                  ({"full_name": "owner/repo", "private": True, "visibility": "private"}, False),
+                                  ({"full_name": "other/repo", "private": False, "visibility": "public"}, False),
+                                  ({"full_name": "owner/repo", "private": False, "visibility": "internal"}, False)):
+            with self.subTest(payload=payload):
+                def respond(request):
+                    self.assertEqual(str(request.url), "https://api.github.com/repos/owner/repo")
+                    self.assertEqual(request.headers["Authorization"], "Bearer fixture-token")
+                    return httpx.Response(200, json=payload)
+                client = httpx.AsyncClient(transport=httpx.MockTransport(respond))
+                with patch.object(adapter, "token", return_value="fixture-token"), \
+                        patch("dianstar.tools.mcp.github_adapter.httpx.AsyncClient", return_value=client):
+                    self.assertEqual(await adapter._public_repository("owner", "repo"), expected)
+
+    async def test_metadata_without_a_token_is_anonymous(self):
+        adapter = GitHubAdapter(MCPSettings())
+        def respond(request):
+            self.assertNotIn("Authorization", request.headers)
+            return httpx.Response(200, json={"full_name": "owner/repo", "private": False, "visibility": "public"})
+        client = httpx.AsyncClient(transport=httpx.MockTransport(respond))
+        with patch.object(adapter, "token", return_value=None), \
+                patch("dianstar.tools.mcp.github_adapter.httpx.AsyncClient", return_value=client):
+            self.assertTrue(await adapter._public_repository("owner", "repo"))
+
+    async def test_metadata_failures_do_not_follow_redirects_or_allow_content(self):
+        adapter = GitHubAdapter(MCPSettings())
+        for status in (301, 403, 404):
+            with self.subTest(status=status):
+                requests = []
+                def respond(request):
+                    requests.append(str(request.url))
+                    return httpx.Response(status, headers={"Location": "https://untrusted.example/"})
+                client = httpx.AsyncClient(transport=httpx.MockTransport(respond), follow_redirects=False)
+                with patch.object(adapter, "token", return_value="fixture-token"), \
+                        patch("dianstar.tools.mcp.github_adapter.httpx.AsyncClient", return_value=client):
+                    self.assertFalse(await adapter._public_repository("owner", "repo"))
+                self.assertEqual(requests, ["https://api.github.com/repos/owner/repo"])
+
+
 class GitHubConfigurationTests(unittest.TestCase):
     def test_old_configuration_stays_public_read_only_and_new_scopes_round_trip(self):
         old = normalize({"github_repositories": ["Owner/Repo"]})
         self.assertEqual(old.github_private_repositories, ())
-        self.assertEqual(old.github_write_repositories, ())
+        self.assertIsNone(old.github_write_repositories)
         configured = normalize({**asdict(old), "github_private_repositories": ["OWNER/REPO"],
                                 "github_write_repositories": ["owner/repo"]})
         with tempfile.TemporaryDirectory() as temporary:
@@ -148,6 +190,26 @@ class GitHubSearchTests(unittest.TestCase):
             self.assertEqual(normalized.get("error"), expected_error)
             if not expected_error:
                 self.assertEqual(normalized["sources"], [payload["items"][0]["html_url"]])
+
+    def test_official_minimal_search_scope_and_commit_pinned_source(self):
+        sha = "a" * 40
+        payload = {"items": [{"repository": "owner/repo", "path": "src/example.py", "sha": "b" * 40,
+            "text_matches": [{"object_url": f"https://api.github.com/repositories/123/contents/src/example.py?ref={sha}",
+                              "fragment": "https://untrusted.example/ignore"}]}]}
+        args = {"query": "repo:owner/repo example"}
+        normalized = normalize_result(result(payload), "github", "search_code", args, Path("missing.env"), repositories={"owner/repo"})
+        self.assertEqual(normalized["sources"], [f"https://github.com/owner/repo/blob/{sha}/src/example.py"])
+        payload["items"][0]["repository"] = "other/repo"
+        self.assertEqual(normalize_result(result(payload), "github", "search_code", args, Path("missing.env"), repositories={"owner/repo"})["error"], "mcp_repository_denied")
+
+    def test_official_repo_resource_uri_produces_verified_file_source(self):
+        from mcp.types import EmbeddedResource, TextResourceContents
+        sha = "a" * 40
+        resource = EmbeddedResource(type="resource", resource=TextResourceContents(
+            uri=f"repo://owner/repo/sha/{sha}/contents/src/example.py", text="source"))
+        normalized = normalize_result(CallToolResult(content=[resource]), "github", "get_file_contents",
+            {"owner": "owner", "repo": "repo"}, Path("missing.env"))
+        self.assertEqual(normalized["sources"], [f"https://github.com/owner/repo/blob/{sha}/src/example.py"])
 
 
 class GitHubWorkflowTests(unittest.IsolatedAsyncioTestCase):

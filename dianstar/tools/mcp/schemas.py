@@ -57,7 +57,9 @@ def adapted_schema(server: str, tool) -> dict | None:
                 clean(item)
     clean(parameters)
     return {"type": "function", "function": {"name": f"mcp_{server}__{tool.name}",
-        "description": (("修改已配置的本地 Git 仓库；程序展示具体预览并单独审批。" if tool.name in GIT_WRITE_TOOLS else
+        "description": (("选定文件一次确认后完成暂存、提交、普通推送及远程核验；不含强推或删除。" if tool.name == "git_publish" else
+                         "克隆到明确的本地目标目录；程序展示地址和目标，单次确认后执行，不覆盖已有目录。" if tool.name == "git_clone" else
+                         "修改已配置的本地 Git 仓库；程序展示具体预览并单独审批。" if tool.name in GIT_WRITE_TOOLS else
                           "只读查询已配置的本地 Git 仓库。") if server == "git" else
                         ("修改已配置的 GitHub 仓库；先展示预览并单独审批。" if tool.name in GITHUB_WRITE_TOOLS else
                          "只读查询已配置的 GitHub 仓库。搜索 query 的每个 OR 分支须限定 repo:owner/repo。"))

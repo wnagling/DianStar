@@ -38,9 +38,12 @@ def _answer(question: str, conversation: Conversation | None = None) -> bool:
         unnamed = conversation is not None and conversation.name is None
         approval = approve_paid_web if conversation is not None and sys.stdin.isatty() else None
         async def approve_permission(request: dict) -> bool:
-            print("权限变更：" + request["description"])
+            print("操作确认：" + request.get("summary", request["description"]))
             try:
-                choice = await asyncio.to_thread(input, "确认请输入 y；其他输入取消：")
+                choice = await asyncio.to_thread(input, "确认请输入 y；查看详情输入 d；其他输入取消：")
+                while choice.strip().lower() == "d":
+                    print(request["description"])
+                    choice = await asyncio.to_thread(input, "确认请输入 y；其他输入取消：")
             except (EOFError, KeyboardInterrupt):
                 return False
             return choice.strip().lower() == "y"
@@ -79,13 +82,19 @@ def _answer(question: str, conversation: Conversation | None = None) -> bool:
 def main() -> int:
     parser = argparse.ArgumentParser(
         prog="dianstar",
-        description="Chat with DianStar. Project file tools are not implemented yet.",
+        description="DianStar: chat, project tools and GitHub collaboration.",
     )
     parser.add_argument("question", nargs="?", help="Ask once; omit to start interactive chat")
     parser.add_argument("--resume", metavar="ID", help="Resume a saved conversation")
     parser.add_argument("--list", action="store_true", help="List saved conversation IDs")
     parser.add_argument("--plain", action="store_true", help="Use the original text-only chat")
+    parser.add_argument("--github", choices=["status", "login", "token", "logout"], help="Manage GitHub login without a model key")
     args = parser.parse_args()
+    if args.github:
+        if args.question or args.resume or args.list:
+            parser.error("GitHub account commands cannot be combined with a question or conversation selection.")
+        from dianstar.ui.github_account_cli import run_account_command
+        return run_account_command(args.github)
 
     if args.question is not None and (args.resume or args.list):
         parser.error("A one-time question cannot be combined with --resume or --list.")
@@ -114,7 +123,7 @@ def main() -> int:
 
     print(f"会话 ID：{conversation.id}")
     print(f"当前会话：{conversation.name or '未命名'}（ID：{conversation.id}）")
-    print("指令：/new、/rename 新名称、/resume 会话名、/switch、/compress、/config、/exit。")
+    print("指令：/new、/rename 新名称、/resume 会话名、/switch、/compress、/config、/github、/exit。")
     while True:
         try:
             question = input("主包> ").strip()
@@ -125,10 +134,14 @@ def main() -> int:
             break
         try:
             if question == "/help":
-                print("指令：/help、/new、/rename 新名称、/resume 会话名、/switch、/compress、/config、/exit。")
+                print("指令：/help、/new、/rename 新名称、/resume 会话名、/switch、/compress、/config、/github、/exit。")
                 continue
             if question == "/config":
                 print("配置界面在 TUI 中使用；运行 python -m dianstar 后输入 /config。")
+                continue
+            if question == "/github" or question.startswith("/github "):
+                from dianstar.ui.github_account_cli import run_account_command
+                run_account_command(question.partition(" ")[2].strip() or "status")
                 continue
             if question == "/new":
                 conversation = commands.new_conversation(conversation)
@@ -202,7 +215,7 @@ def main() -> int:
                 print("后续请求的上下文已清空；聊天记录仍保存在当前会话中。")
                 continue
             if question.startswith("/"):
-                print("未知指令。可用指令：/new、/rename、/resume、/switch、/compress、/exit。")
+                print("未知指令。可用指令：/new、/rename、/resume、/switch、/compress、/config、/github、/exit。")
                 continue
             if question:
                 _answer(question, conversation)

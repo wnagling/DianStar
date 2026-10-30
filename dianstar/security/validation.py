@@ -19,8 +19,10 @@ def valid_arguments(schema: dict, arguments: dict) -> bool:
         Draft202012Validator.check_schema(parameters)
         # GitHub's official update schemas allow empty text (e.g. clearing a PR
         # body). Its repository and query policy is checked by the adapter.
-        official_github = schema["function"].get("name", "").startswith("mcp_github__")
-        return Draft202012Validator(parameters, registry=Registry()).is_valid(arguments) and (official_github or nonempty_strings(arguments))
+        name = schema["function"].get("name", "")
+        allows_empty_text = name.startswith("mcp_github__") or name in {
+            "github_repository_settings_update", "workspace_edit", "mcp_git__git_clone", "mcp_git__git_show", "mcp_git__git_config_set"}
+        return Draft202012Validator(parameters, registry=Registry()).is_valid(arguments) and (allows_empty_text or nonempty_strings(arguments))
     except (KeyError, TypeError, ValueError, RecursionError, SchemaError, Unresolvable):
         return False
 

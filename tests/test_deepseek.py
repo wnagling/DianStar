@@ -7,7 +7,7 @@ import unittest
 from contextlib import redirect_stderr, redirect_stdout
 from pathlib import Path
 from types import SimpleNamespace
-from unittest.mock import AsyncMock, patch
+from unittest.mock import ANY, AsyncMock, patch
 
 from httpx import Request
 from openai import APIConnectionError
@@ -521,10 +521,16 @@ class DeepSeekTests(unittest.IsolatedAsyncioTestCase):
             messages=[{"role": "system", "content": build_system_prompt()},
                       {"role": "user", "content": "Hello"}],
             stream=False,
-            tools=[WEATHER_TOOL, DATE_TOOL, NUMBER_TOOL, WEB_ACCESS_TOOL, SEARCH_TOOL, FETCH_TOOL],
+            tools=ANY,
             tool_choice="auto",
             extra_body={"thinking": {"type": "enabled"}},
         )
+        tools = client.chat.completions.create.await_args.kwargs["tools"]
+        self.assertEqual(tools[:6], [WEATHER_TOOL, DATE_TOOL, NUMBER_TOOL, WEB_ACCESS_TOOL, SEARCH_TOOL, FETCH_TOOL])
+        names = {item["function"]["name"] for item in tools[6:]}
+        self.assertTrue({"mcp_status", "mcp_git__git_status", "mcp_git__git_clone"} <= names)
+        self.assertFalse({"get_mcp_configuration", "configure_mcp"} & names)
+        self.assertTrue({"mcp_git__git_commit", "mcp_git__git_push", "workspace_run", "workspace_edit"} <= names)
 
     @patch("dianstar.tools.local.registry.get_weather", new_callable=AsyncMock)
     @patch("dianstar.providers.deepseek.AsyncOpenAI")

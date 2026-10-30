@@ -2,12 +2,15 @@
 import argparse
 import asyncio
 from mcp.server.fastmcp import FastMCP
-from dianstar.tools.mcp.servers.git.operations import GitWorkspace
+from dianstar.tools.mcp.servers.git.workspace import GitWorkspace
+from dianstar.tools.mcp.servers.git.tool_definitions import register_tools
 
 
-def make_server(repositories, allow_writes=False):
-    workspace = GitWorkspace(repositories, allow_writes)
+def make_server(repositories, allow_writes=False, workspace_roots=(), *, allow_clone=False, confirm_destinations=False):
+    workspace = GitWorkspace(repositories, allow_writes, workspace_roots,
+                             allow_clone=allow_clone, confirm_destinations=confirm_destinations)
     server = FastMCP("DianStar Git")
+    register_tools(server, workspace, allow_writes, allow_clone=allow_clone)
 
     @server.tool()
     async def git_status(repository: str) -> dict:
@@ -67,11 +70,12 @@ def make_server(repositories, allow_writes=False):
             return await asyncio.to_thread(workspace.prepare, "git_fetch", repository, remote=remote)
 
         @server.tool()
-        async def git_push(repository: str, branch: str, remote: str = "origin", set_upstream: bool = False) -> dict:
+        async def git_push(repository: str, branch: str, remote: str = "origin", set_upstream: bool = False, force_with_lease: bool = False) -> dict:
             """预览当前分支普通推送；branch 必须明确为远程目标分支，不允许强制推送。"""
             return await asyncio.to_thread(workspace.prepare, "git_push", repository,
-                remote=remote, branch=branch, set_upstream=set_upstream)
+                remote=remote, branch=branch, set_upstream=set_upstream, force_with_lease=force_with_lease)
 
+    if allow_writes or allow_clone:
         @server.tool()
         async def git_apply(token: str) -> dict:
             """应用内部专用：消费已批准预览的 token，不注册给问答模型。"""
@@ -82,10 +86,14 @@ def make_server(repositories, allow_writes=False):
 
 def main():
     parser = argparse.ArgumentParser()
-    parser.add_argument("--repo", action="append", required=True)
+    parser.add_argument("--repo", action="append", default=[])
+    parser.add_argument("--workspace-root", action="append", default=[])
     parser.add_argument("--allow-writes", action="store_true")
+    parser.add_argument("--allow-clone", action="store_true")
+    parser.add_argument("--confirm-destinations", action="store_true")
     args = parser.parse_args()
-    make_server(args.repo, args.allow_writes).run(transport="stdio")
+    make_server(args.repo, args.allow_writes, args.workspace_root, allow_clone=args.allow_clone,
+                confirm_destinations=args.confirm_destinations).run(transport="stdio")
 
 
 if __name__ == "__main__":

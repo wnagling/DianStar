@@ -50,6 +50,9 @@ class Authorization:
     def revision(self, capability: str) -> int:
         return self._revisions.get(capability, 0)
 
+    def is_denied(self, capability: str) -> bool:
+        return capability in self._denied
+
     def deny(self, capability: str) -> None:
         self.revoke(capability)
         self._denied.add(capability)

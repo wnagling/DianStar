@@ -63,8 +63,8 @@ class StdioConnection:
                                 continue
                             if self.changed:
                                 raise MCPUnavailable()
-                            result = await session.call_tool(name, arguments,
-                                read_timeout_seconds=timedelta(seconds=70 if name == "git_apply" else 12))
+                            timeout = 190 if name == "git_apply" else 45 if name in {"git_pull", "git_remote_branch_delete", "git_push"} else 12
+                            result = await session.call_tool(name, arguments, read_timeout_seconds=timedelta(seconds=timeout))
                             if not pending.done():
                                 pending.set_result(result)
                             pending = None
@@ -89,7 +89,7 @@ class StdioConnection:
         future = asyncio.get_running_loop().create_future()
         self.queue.put_nowait((name, arguments, future))
         try:
-            return await asyncio.wait_for(future, 75 if name == "git_apply" else 14)
+            return await asyncio.wait_for(future, 195 if name == "git_apply" else 47 if name in {"git_pull", "git_remote_branch_delete", "git_push"} else 14)
         except BaseException:
             await self.close()
             raise

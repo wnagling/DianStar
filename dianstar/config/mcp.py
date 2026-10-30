@@ -14,21 +14,26 @@ MCP_CONFIG_FILE = CONFIG_FILE.with_name("mcp.json")
 
 @dataclass(frozen=True)
 class MCPSettings:
-    git_enabled: bool = False
+    git_enabled: bool | None = None
     git_repositories: tuple[str, ...] = ()
-    github_enabled: bool = False
+    github_enabled: bool | None = None
     github_executable: str = ""
     github_repositories: tuple[str, ...] = ()
-    git_write_enabled: bool = False
+    git_write_enabled: bool | None = None
     github_private_repositories: tuple[str, ...] = ()
-    github_write_repositories: tuple[str, ...] = ()
+    github_write_repositories: tuple[str, ...] | None = None
+    git_workspace_roots: tuple[str, ...] = ()
+    github_admin_repositories: tuple[str, ...] | None = None
+    github_use_git_credentials: bool = False
+    workspace_write_enabled: bool | None = None
 
 
 def normalize(data: dict) -> MCPSettings:
     if not isinstance(data, dict) or set(data) - set(MCPSettings.__dataclass_fields__):
         raise ValueError("MCP 配置字段无效。")
-    for name in ("git_enabled", "github_enabled", "git_write_enabled"):
-        if type(data.get(name, False)) is not bool:
+    for name in ("git_enabled", "github_enabled", "git_write_enabled", "github_use_git_credentials", "workspace_write_enabled"):
+        value = data.get(name, False if name == "github_use_git_credentials" else None)
+        if type(value) is not bool and not (value is None and name != "github_use_git_credentials"):
             raise ValueError("MCP 启用状态无效。")
     roots, repos = data.get("git_repositories", []), data.get("github_repositories", [])
     if (not isinstance(roots, (list, tuple)) or not isinstance(repos, (list, tuple))
@@ -36,7 +41,7 @@ def normalize(data: dict) -> MCPSettings:
         raise ValueError("每种服务最多配置 10 个仓库。")
     paths = []
     for root in roots:
-        if not isinstance(root, str) or not root.strip() or not Path(root).is_absolute():
+        if not isinstance(root, str) or not root.strip() or not Path(root).is_absolute() or root.startswith(("\\\\", "//")):
             raise ValueError("本地仓库必须填写绝对路径。")
         # Resolve again when executing: a junction may change after configuration.
         paths.append(str(Path(root).resolve()))
@@ -48,8 +53,11 @@ def normalize(data: dict) -> MCPSettings:
             raise ValueError("GitHub 仓库名称无效。")
         names.append(repo.lower())
     scopes = {}
-    for field in ("github_private_repositories", "github_write_repositories"):
-        values = data.get(field, [])
+    for field in ("github_private_repositories", "github_write_repositories", "github_admin_repositories"):
+        values = data.get(field, [] if field == "github_private_repositories" else None)
+        if values is None and field != "github_private_repositories":
+            scopes[field] = None
+            continue
         if (not isinstance(values, (list, tuple)) or len(values) > 10
                 or any(not isinstance(value, str) or value.lower() not in names for value in values)):
             raise ValueError("私有访问和写操作仓库必须属于允许访问的 GitHub 仓库。")
@@ -57,14 +65,16 @@ def normalize(data: dict) -> MCPSettings:
     executable = data.get("github_executable", "")
     if not isinstance(executable, str) or (executable and not Path(executable).is_absolute()):
         raise ValueError("GitHub MCP 程序必须填写绝对路径。")
-    if data.get("git_enabled") and not paths:
-        raise ValueError("请先指定允许访问的本地仓库。")
-    if data.get("github_enabled") and (not executable or not names):
-        raise ValueError("请先指定 GitHub MCP 程序和允许访问的仓库。")
-    return MCPSettings(data.get("git_enabled", False), tuple(dict.fromkeys(paths)),
-                       data.get("github_enabled", False), executable, tuple(dict.fromkeys(names)),
-                       data.get("git_write_enabled", False),
-                       scopes["github_private_repositories"], scopes["github_write_repositories"])
+    workspace_roots = data.get("git_workspace_roots", [])
+    if (not isinstance(workspace_roots, (list, tuple)) or len(workspace_roots) > 10
+            or any(not isinstance(path, str) or not Path(path).is_absolute() or path.startswith(("\\\\", "//")) for path in workspace_roots)):
+        raise ValueError("创建仓库的目录必须为绝对路径，最多 10 项。")
+    workspace_roots = tuple(dict.fromkeys(str(Path(path).resolve()) for path in workspace_roots))
+    return MCPSettings(data.get("git_enabled"), tuple(dict.fromkeys(paths)),
+                       data.get("github_enabled"), executable, tuple(dict.fromkeys(names)),
+                       data.get("git_write_enabled"),
+                       scopes["github_private_repositories"], scopes["github_write_repositories"], workspace_roots,
+                       scopes["github_admin_repositories"], data.get("github_use_git_credentials", False), data.get("workspace_write_enabled"))
 
 
 def load_mcp_settings(path: Path = MCP_CONFIG_FILE) -> MCPSettings:
@@ -75,7 +85,7 @@ def load_mcp_settings(path: Path = MCP_CONFIG_FILE) -> MCPSettings:
             raise ValueError
         return normalize(json.loads(path.read_text(encoding="utf-8")))
     except (ValueError, TypeError, OSError):
-        raise ValueError("MCP 配置无效，请在 /config 的 MCP 页面检查并保存。") from None
+        raise ValueError("后台工具配置损坏，请恢复最近的配置备份后重试。") from None
 
 
 def save_mcp_settings(settings: MCPSettings, path: Path = MCP_CONFIG_FILE) -> MCPSettings:

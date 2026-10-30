@@ -203,7 +203,10 @@ class ConfigTuiTests(unittest.IsolatedAsyncioTestCase):
                               config_file=config_file, env_file=env_file)
             async with app.run_test(size=(100, 35)) as pilot:
                 app.query_one("#input", ChatInput).text = "/config"
-                await pilot.press("enter", "enter", "enter")
+                # Allow each mounted page to receive focus before the next key.
+                for _ in range(3):
+                    await pilot.press("enter")
+                    await pilot.pause()
                 screen = app.screen
                 key = screen.query_one("#config-key", Input)
                 toggle = screen.query_one("#key-visibility", Button)
@@ -339,7 +342,9 @@ class ConfigTuiTests(unittest.IsolatedAsyncioTestCase):
                               config_file=config_file, env_file=env_file)
             async with app.run_test() as pilot:
                 app.query_one("#input", ChatInput).text = "/config"
-                await pilot.press("enter", "enter", "enter")
+                for _ in range(3):
+                    await pilot.press("enter")
+                    await pilot.pause()
                 screen = app.screen
                 self.assertEqual(screen.page, "key-edit")
                 await pilot.click("#key-delete")

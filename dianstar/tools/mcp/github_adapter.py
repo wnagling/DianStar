@@ -4,8 +4,11 @@ from pathlib import Path
 import httpx
 from dotenv import dotenv_values
 import os
+import re
+from urllib.parse import parse_qs, quote, unquote, urlsplit
 from dianstar.tools.mcp.github_contract import METHODS, SEARCH_TOOLS, WRITE_TOOLS
 from dianstar.tools.mcp.github_search import search_repositories
+from dianstar.tools.mcp.credentials import github_token
 
 
 class GitHubAdapter:
@@ -13,8 +16,7 @@ class GitHubAdapter:
         self.settings, self.env_file = settings, env_file
 
     def token(self):
-        values = dotenv_values(self.env_file) if self.env_file.is_file() else {}
-        return values.get("GITHUB_PERSONAL_ACCESS_TOKEN") or os.environ.get("GITHUB_PERSONAL_ACCESS_TOKEN")
+        return github_token(self.settings, self.env_file)
 
     def repositories(self, name, arguments):
         allowed = set(self.settings.github_repositories)
@@ -57,7 +59,7 @@ class GitHubAdapter:
                 targets |= self.repositories(name, parent)
         except ValueError:
             return {"error": "mcp_repository_denied"}
-        if not targets <= set(self.settings.github_write_repositories):
+        if not targets <= set(self.settings.github_write_repositories or ()):
             return {"error": "github_write_disabled"}
         if not self.token():
             return {"error": "github_token_missing"}
@@ -95,15 +97,54 @@ class GitHubAdapter:
             return data["data"]["node"]
 
     async def _public_repository(self, owner, repo):
-        # Unauthenticated check: a token must not silently expose private content.
+        # Authentication raises the metadata rate limit; visibility still gates
+        # every content call, even when the token can access private repositories.
+        headers = {"Accept": "application/vnd.github+json"}
+        token = self.token()
+        if token:
+            headers["Authorization"] = "Bearer " + token
         async with httpx.AsyncClient(timeout=8, follow_redirects=False, trust_env=True) as client:
             response = await client.get(f"https://api.github.com/repos/{owner}/{repo}",
-                headers={"Accept": "application/vnd.github+json"})
+                headers=headers)
             if response.status_code != 200 or len(response.content) > 65536:
                 return False
             data = response.json()
             return (data.get("private") is False and data.get("visibility") == "public"
                     and str(data.get("full_name", "")).lower() == f"{owner}/{repo}".lower())
+
+
+def resource_source(uri):
+    """Translate official commit-pinned file resources into their GitHub page."""
+    parsed = urlsplit(uri)
+    parts = parsed.path.strip("/").split("/", 4)
+    if (parsed.scheme != "repo" or len(parts) != 5 or parts[1] != "sha" or parts[3] != "contents"
+            or not re.fullmatch(r"[0-9a-fA-F]{40}", parts[2])):
+        return uri
+    path = unquote(parts[4])
+    if any(part in {".", ".."} for part in path.split("/")):
+        return ""
+    return f"https://github.com/{parsed.netloc}/{parts[0]}/blob/{parts[2]}/{quote(path, safe='/')}"
+
+
+def search_item_source(value):
+    """Use API match metadata, never URLs quoted inside code fragments."""
+    repository, path = value.get("repository"), value.get("path")
+    if not isinstance(repository, str) or not isinstance(path, str):
+        return None
+    matches = value.get("text_matches")
+    if not isinstance(matches, list):
+        return None
+    for match in matches[:20]:
+        if not isinstance(match, dict) or not isinstance(match.get("object_url"), str):
+            continue
+        parsed = urlsplit(match["object_url"])
+        endpoint = re.fullmatch(r"/repositories/[0-9]+/contents/(.+)", parsed.path)
+        ref = parse_qs(parsed.query).get("ref", [""])[0]
+        if (parsed.scheme == "https" and parsed.netloc == "api.github.com" and endpoint
+                and unquote(endpoint[1]) == path and re.fullmatch(r"[0-9a-fA-F]{40}", ref)
+                and not any(part in {".", ".."} for part in path.split("/"))):
+            return f"https://github.com/{repository}/blob/{ref}/{quote(path, safe='/')}"
+    return None
 
 
 def github_sources(texts, arguments, resource_urls=(), repositories=()):
@@ -113,7 +154,8 @@ def github_sources(texts, arguments, resource_urls=(), repositories=()):
     prefixes = [f"https://github.com/{repository}".lower() for repository in repositories]
     def in_scope(url):
         return isinstance(url, str) and any(url.lower() == prefix or url.lower().startswith(prefix + "/") for prefix in prefixes)
-    urls = [url for url in resource_urls if in_scope(url)][:20]
+    translated = [resource_source(url) for url in resource_urls]
+    urls = [url for url in translated if in_scope(url)][:20]
     def visit(value, depth=0):
         if depth > 6 or len(urls) >= 20:
             return
@@ -121,6 +163,9 @@ def github_sources(texts, arguments, resource_urls=(), repositories=()):
             url = value.get("html_url")
             if in_scope(url):
                 urls.append(url)
+            search_source = search_item_source(value)
+            if in_scope(search_source):
+                urls.append(search_source)
             for key, item in list(value.items())[:100]:
                 if key not in {"body", "content", "text", "description"}:
                     visit(item, depth + 1)

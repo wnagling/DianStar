@@ -156,7 +156,8 @@ class DateToolLoopTests(unittest.IsolatedAsyncioTestCase):
             env_file.write_text("DEEPSEEK_API_KEY=fake-test-key\n", encoding="utf-8")
             answer = await run_turn("计算日期", env_file=env_file, history=history)
         requests = client.chat.completions.create.await_args_list
-        self.assertEqual(requests[0].kwargs["tools"], [WEATHER_TOOL, DATE_TOOL, NUMBER_TOOL, WEB_ACCESS_TOOL, SEARCH_TOOL, FETCH_TOOL])
+        self.assertEqual(requests[0].kwargs["tools"][:6], [WEATHER_TOOL, DATE_TOOL, NUMBER_TOOL, WEB_ACCESS_TOOL, SEARCH_TOOL, FETCH_TOOL])
+        self.assertIn("mcp_status", {item["function"]["name"] for item in requests[0].kwargs["tools"]})
         self.assertIn("calculate_date", requests[0].kwargs["messages"][0]["content"])
         self.assertIn("invalid_date", requests[1].kwargs["messages"][-1]["content"])
         result_messages = requests[2].kwargs["messages"][-2:]

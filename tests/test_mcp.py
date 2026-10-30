@@ -45,7 +45,7 @@ class MCPConfigTests(unittest.TestCase):
             self.assertEqual(save_mcp_settings(settings, path), load_mcp_settings(path))
             for data in ({"token": "fake"}, {"git_enabled": "true"},
                          {"git_repositories": ["../other"]}, {"github_repositories": ["x/../other"]},
-                         {"git_enabled": True}, {"github_executable": "server.exe"}):
+                         {"github_use_git_credentials": None}, {"github_executable": "server.exe"}):
                 with self.assertRaises(ValueError):
                     normalize(data)
             path.write_text("{broken", encoding="utf-8")
@@ -60,13 +60,31 @@ class MCPConfigTests(unittest.TestCase):
             exe = root / "github-mcp-server.exe"
             exe.touch()
             settings = MCPSettings(True, (str(root),), True, str(exe), ("owner/repo",))
-            with patch.dict(os.environ, {"UNRELATED_SECRET": "must-not-inherit"}):
+            with patch.dict(os.environ, {"UNRELATED_SECRET": "fixture-must-not-inherit"}):
                 params = server_parameters(settings, env)
             self.assertNotIn("GITHUB_PERSONAL_ACCESS_TOKEN", params["git"].env)
+            self.assertNotIn("fake-model-secret", json.dumps(params["git"].env))
+            self.assertNotIn("fake-github-secret", json.dumps(params["git"].env))
             self.assertEqual(params["github"].env["GITHUB_PERSONAL_ACCESS_TOKEN"], "fake-github-secret")
             self.assertNotIn("DEEPSEEK_API_KEY", params["github"].env)
             self.assertNotIn("UNRELATED_SECRET", params["github"].env)
             self.assertIn("--read-only", params["github"].args)
+
+    def test_servers_inherit_system_proxy_without_inheriting_other_credentials(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            executable = root / "server.exe"
+            executable.touch()
+            settings = MCPSettings(github_enabled=True, github_executable=str(executable),
+                                   github_repositories=("owner/repo",))
+            with patch.dict(os.environ, {"UNRELATED_SECRET": "fixture-must-not-inherit"}, clear=True), \
+                    patch("dianstar.tools.mcp.launch.getproxies", return_value={
+                        "http": "http://127.0.0.1:7890", "https": "http://127.0.0.1:7890", "no": "localhost"}):
+                parameters = server_parameters(settings, root / ".env")["github"]
+            self.assertEqual(parameters.env["HTTPS_PROXY"], "http://127.0.0.1:7890")
+            self.assertEqual(parameters.env["HTTP_PROXY"], "http://127.0.0.1:7890")
+            self.assertEqual(parameters.env["NO_PROXY"], "localhost")
+            self.assertNotIn("UNRELATED_SECRET", parameters.env)
 
     def test_schema_supports_nested_values_but_never_remote_refs(self):
         parameters = schema({"page": {"type": "integer", "minimum": 1, "maximum": 30},
@@ -227,8 +245,10 @@ class GitMCPAcceptance(unittest.IsolatedAsyncioTestCase):
         settings = MCPSettings(True, (str(self.repo),))
         before = (self.repo / ".git" / "index").read_bytes()
         async with MCPTools(settings, self.root / ".env", auth) as tools:
-            self.assertEqual(tools.status["git"], {"state": "connected", "tools": 5})
-            self.assertEqual(set(tools.registry), {"mcp_git__git_status", "mcp_git__git_diff", "mcp_git__git_log", "mcp_git__git_branches", "mcp_git__git_remotes"})
+            self.assertEqual(tools.status["git"], {"state": "connected", "tools": 11})
+            self.assertEqual(set(tools.registry), {"mcp_git__" + name for name in (
+                "git_status", "git_diff", "git_log", "git_branches", "git_remotes", "git_show", "git_diff_refs",
+                "git_config_read", "git_worktree_list", "git_stash_list", "git_conflicts")})
             gateway = ToolGateway(auth, tools.registry)
             for operation, extra, expected in (("status", {}, "sample.txt"), ("diff", {"staged": False}, "+new"),
                                                 ("log", {"limit": 1}, "initial fixture")):

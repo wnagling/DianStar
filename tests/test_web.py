@@ -449,7 +449,7 @@ class WebIntegrationTests(unittest.IsolatedAsyncioTestCase):
                 app.push_screen(ConfigScreen(config_file=config, env_file=env))
                 await pilot.pause()
                 self.assertEqual(len(app.screen.query_one('#config-menu', ListView).children), 5)
-                self.assertTrue(app.screen.query('#menu-mcp'))
+                self.assertFalse(app.screen.query('#menu-mcp'))
                 self.assertFalse(app.screen.query('#menu-search'))
                 self.assertFalse(app.screen.query('#search-page'))
                 self.assertEqual(load_model_settings(config).default_model, 'deepseek-flash')
