@@ -118,7 +118,7 @@ async def run_turn(
 
             async def act(action: ToolAction) -> Observation:
                 result = await gateway.execute(action)
-                if action.name.startswith("mcp_github__"):
+                if action.name.startswith(("mcp_github__", "mcp_git__")):
                     result = Observation(action, evidence.observe(action.name, action.arguments, result.result))
                 session.observe(action, json.dumps(result.result, ensure_ascii=False))
                 return result

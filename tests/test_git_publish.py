@@ -1,5 +1,6 @@
 """One approval publishes an explicit file set; all Git fixtures are local."""
 import json
+import sys
 import unittest
 from unittest.mock import AsyncMock, patch
 
@@ -50,6 +51,8 @@ class PublishTests(GitFixture, unittest.TestCase):
         self.assertTrue(result["success"], result)
         self.assertEqual(result["completed_steps"], ["stage", "commit", "push"])
         self.assertTrue(result["remote_verified"])
+        self.assertEqual(plan["remote_target"], {"url": str(self.remote), "remote": "origin", "branch": "main"})
+        self.assertEqual(result["remote_url"], str(self.remote))
         self.assertEqual(result["commit"], self.git("rev-parse", "refs/heads/main", cwd=self.remote))
         self.assertEqual(self.git("show", "HEAD:new.txt"), "new implementation")
         self.assertEqual(self.git("show", "HEAD:two.txt"), "original two")
@@ -279,5 +282,39 @@ class PublishMCPTests(GitFixture, unittest.IsolatedAsyncioTestCase):
                            project_directory=self.repo, on_permission=approve, history=history)
         approve.assert_awaited_once()
         results = [json.loads(m["content"]) for m in history if m["role"] == "tool"]
+        self.assertEqual(len(results), 2)
+        self.assertTrue(results[-1]["remote_verified"])
+        self.assertTrue(results[-1]["operation_evidence"]["remote_verified"])
+        self.assertFalse(results[-1]["operation_evidence"]["web_content_read"])
+        self.assertEqual(results[-1]["remote_url"], str(self.remote))
+        self.assertEqual(results[-1]["commit"], self.git("rev-parse", "refs/heads/main", cwd=self.remote))
+
+    async def test_validation_compile_and_whitespace_checks_then_publish_confirm_only_once(self):
+        tests = self.repo / "tests"
+        tests.mkdir()
+        (tests / "test_example.py").write_text(
+            "import unittest\nclass Example(unittest.TestCase):\n"
+            "    def test_example(self):\n        self.assertEqual(1, 1)\n", encoding="utf-8")
+        env = self.root / ".env"
+        env.write_text("DEEPSEEK_API_KEY=fixture-model-key\n")
+        approval, history = AsyncMock(return_value=True), []
+        with patch("dianstar.providers.deepseek.AsyncOpenAI") as factory:
+            factory.return_value.chat.completions.create = AsyncMock(side_effect=[
+                call("workspace_run", {"repository": str(self.repo),
+                     "argv": [sys.executable, "-m", "unittest", "discover", "-s", "tests", "-q"]}),
+                call("workspace_run", {"repository": str(self.repo),
+                     "argv": [sys.executable, "-m", "compileall", "-q", "tests"]}),
+                call("workspace_run", {"repository": str(self.repo), "argv": ["git", "diff", "--check"]}),
+                call("mcp_git__git_publish", {"repository": str(self.repo), "files": ["one.txt", "tests/test_example.py"],
+                     "message": "publish validated project", "branch": "main", "remote": "origin"}),
+                reply("测试和检查通过，项目已经推送并核验。"),
+            ])
+            await run_turn("先运行测试、编译和空白检查，再把当前项目的改动提交并推送", env_file=env, project_directory=self.repo,
+                           on_permission=approval, history=history)
+        results = [json.loads(m["content"]) for m in history if m["role"] == "tool"]
+        self.assertEqual(len(results), 4)
+        self.assertTrue(all(result.get("success") for result in results), results)
         self.assertTrue(results[-1]["remote_verified"])
         self.assertEqual(results[-1]["commit"], self.git("rev-parse", "refs/heads/main", cwd=self.remote))
+        approval.assert_awaited_once()
+        self.assertIn("提交并推送", approval.await_args.args[0]["summary"])

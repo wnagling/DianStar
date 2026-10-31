@@ -10,7 +10,7 @@ from unittest.mock import AsyncMock, patch
 import httpx
 
 from dianstar.app.github_account import GitHubAccount
-from dianstar.config.github_account import load_account, save_account, cached_token
+from dianstar.config.github_account import load_account, save_account, cached_token, MAX_PENDING_CLEANUP
 from dianstar.config.mcp import MCPSettings, save_mcp_settings
 from dianstar.platform.github_credentials import CredentialManager, GitHubLoginError, credential_environment
 from dianstar.tools.mcp.credentials import github_token
@@ -126,6 +126,83 @@ class AccountTests(unittest.IsolatedAsyncioTestCase):
         self.assertNotEqual(load_account(self.root)["namespace"], SPACE)
         self.manager.erase.assert_awaited_once_with(SPACE, "old-user")
 
+    async def test_failed_old_cleanup_survives_account_switch_and_restart(self):
+        save_account(self.root, {"mode": "managed", "login": "old-user", "namespace": SPACE})
+        self.manager.erase.side_effect = GitHubLoginError("vault unavailable")
+        status = await self.service.login(VALUE)
+        current = load_account(self.root)
+        self.assertEqual(status.state, "connected")
+        self.assertIn("尚未清理", status.message)
+        self.assertEqual(current["pending_cleanup"], [{"login": "old-user", "namespace": SPACE}])
+        self.assertNotIn(VALUE, (self.root / ".local/github_account.json").read_text())
+        self.manager.erase.side_effect = None
+        restarted = GitHubAccount(self.env, manager=self.manager, transport=self.service.transport)
+        with patch("dianstar.config.github_account.read_stored_token", return_value=VALUE):
+            self.assertEqual((await restarted.check()).state, "connected")
+        self.assertEqual(load_account(self.root)["namespace"], current["namespace"])
+        self.assertNotIn("pending_cleanup", load_account(self.root))
+        self.assertTrue(all(call.args == (SPACE, "old-user") for call in self.manager.erase.await_args_list))
+
+    async def test_old_pending_logout_is_not_forgotten_by_new_login(self):
+        save_account(self.root, {"mode": "signed_out", "login": "old-user", "namespace": SPACE})
+        self.manager.erase.side_effect = GitHubLoginError("vault unavailable")
+        status = await self.service.login(VALUE)
+        self.assertEqual(status.state, "connected")
+        current = load_account(self.root)
+        self.assertEqual(current["pending_cleanup"], [{"login": "old-user", "namespace": SPACE}])
+        await self.service.logout()
+        profile = load_account(self.root)
+        self.assertEqual(profile["mode"], "signed_out")
+        self.assertEqual({item["namespace"] for item in profile["pending_cleanup"]}, {SPACE, current["namespace"]})
+        self.assertIsNone(github_token(MCPSettings(), self.env))
+        self.manager.erase.side_effect = None
+        self.assertEqual((await self.service.check()).state, "signed_out")
+        self.assertEqual(load_account(self.root), {"mode": "signed_out"})
+
+    async def test_cancelling_old_cleanup_keeps_new_account_and_pending_record(self):
+        save_account(self.root, {"mode": "managed", "login": "old-user", "namespace": SPACE})
+        started = asyncio.Event()
+        async def wait(*_):
+            started.set()
+            await asyncio.Event().wait()
+        self.manager.erase.side_effect = wait
+        task = asyncio.create_task(self.service.login(VALUE))
+        await started.wait()
+        task.cancel()
+        with self.assertRaises(asyncio.CancelledError):
+            await task
+        profile = load_account(self.root)
+        self.assertEqual(profile["mode"], "managed")
+        self.assertNotEqual(profile["namespace"], SPACE)
+        self.assertEqual(profile["pending_cleanup"], [{"login": "old-user", "namespace": SPACE}])
+
+    async def test_failed_activation_does_not_delete_existing_active_credentials(self):
+        original = {"mode": "managed", "login": "old-user", "namespace": SPACE}
+        save_account(self.root, original)
+        def fail_new_activation(root, data):
+            if data.get("mode") == "managed" and data.get("namespace") != SPACE:
+                raise OSError("fixture activation failure")
+            return save_account(root, data)
+        with patch("dianstar.app.github_account.save_account", side_effect=fail_new_activation):
+            with self.assertRaises(OSError):
+                await self.service.login(VALUE)
+        self.assertEqual(load_account(self.root), original)
+        self.assertTrue(all(call.args[0] != SPACE for call in self.manager.erase.await_args_list))
+
+    async def test_cleanup_capacity_reserves_a_slot_for_logging_out(self):
+        pending = [{"login": f"old-user-{index}", "namespace": "dianstar-" + f"{index:032x}"}
+                   for index in range(MAX_PENDING_CLEANUP - 1)]
+        save_account(self.root, {"mode": "managed", "login": "fixture-user", "namespace": SPACE,
+                                 "pending_cleanup": pending})
+        with self.assertRaises(GitHubLoginError):
+            await self.service.login(VALUE)
+        self.manager.store.assert_not_awaited()
+        self.manager.erase.side_effect = GitHubLoginError("vault unavailable")
+        self.assertEqual((await self.service.logout()).state, "signed_out")
+        profile = load_account(self.root)
+        self.assertEqual(len(profile["pending_cleanup"]), MAX_PENDING_CLEANUP)
+        self.assertIsNone(github_token(MCPSettings(), self.env))
+
     async def test_failed_store_does_not_activate_account_or_change_policy(self):
         self.manager.store.side_effect = GitHubLoginError("store unavailable")
         with self.assertRaises(GitHubLoginError):
@@ -147,6 +224,21 @@ class AccountTests(unittest.IsolatedAsyncioTestCase):
 
 
 class CredentialBoundaryTests(unittest.TestCase):
+    def test_pending_cleanup_rejects_tokens_other_namespaces_and_active_account(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            active = {"mode": "managed", "login": "fixture-user", "namespace": SPACE}
+            save_account(root, active)
+            invalid = [
+                {"login": "old-user", "namespace": "default"},
+                {"login": "old-user", "namespace": "dianstar-" + "2" * 32, "token": VALUE},
+                {"login": "fixture-user", "namespace": SPACE},
+            ]
+            for entry in invalid:
+                with self.assertRaises(ValueError):
+                    save_account(root, {**active, "pending_cleanup": [entry]})
+                self.assertEqual(load_account(root), active)
+
     def test_missing_credentials_point_to_the_account_entry(self):
         from dianstar.app.mcp_startup import resolve_connections
         with tempfile.TemporaryDirectory() as temporary:

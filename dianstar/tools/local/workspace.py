@@ -16,10 +16,11 @@ from dianstar.core.registry import ToolRegistration
 from dianstar.core.types import Observation
 from dianstar.security.authorization import request_key
 from dianstar.security.gateway import ToolPreparationError
-from dianstar.tools.mcp.servers.git.operations import sensitive
+from dianstar.tools.mcp.servers.git.operations import sensitive, GitError
 from dianstar.security.content_guard import ContentScanner, SecurityViolation, known_credentials, local_configuration
 from dianstar.hooks import HookRunner
 from dianstar.hooks.workspace import WorkspaceAudit
+from dianstar.security.command_policy import command_plan
 
 
 class WorkspaceTools:
@@ -149,8 +150,8 @@ class WorkspaceTools:
                 argv = args["argv"]
                 if not argv or len(argv) > 100 or any(not isinstance(x, str) or not x or "\0" in x or len(x) > 4000 for x in argv):
                     raise ValueError("Invalid command")
-                state = None
-                description = json.dumps({"操作": "运行项目命令", "目录": args["repository"], "参数数组": argv,
+                state = self.prepare_command(argv, self.root(args))
+                description = json.dumps({"操作": "运行项目命令", "目录": args["repository"], "参数数组": state["argv"],
                     "超时秒数": args.get("timeout_seconds", 120), "说明": "进程以当前用户运行，无操作系统沙箱；不会继承模型或 GitHub 密钥环境变量。"}, ensure_ascii=False, indent=2)
             self.prepared[request_key(action_name, args)] = (time.monotonic(), state)
             return description
@@ -165,7 +166,11 @@ class WorkspaceTools:
             return Observation(action, {"error": "workspace_not_prepared"})
         try:
             if action.name == "workspace_run":
-                return Observation(action, await self.run(action.arguments))
+                current = self.prepare_command(action.arguments["argv"], self.root(action.arguments))
+                if current != item[1]:
+                    return Observation(action, {"error": "workspace_command_changed", "message": "执行程序或命令已变化，未执行；请重新检查。"})
+                return Observation(action, await self.run({**action.arguments, "argv": item[1]["argv"]},
+                                                         **({"environment": item[1]["environment"]} if "environment" in item[1] else {})))
             checked_path = self.path(action.arguments, local_only=action.arguments.get("local_only", False))
             checked_before = checked_path.read_bytes() if checked_path.exists() else None
             if item[1][:2] != (str(checked_path), checked_before):
@@ -195,7 +200,22 @@ class WorkspaceTools:
         except (ValueError, KeyError, OSError, UnicodeError):
             return Observation(action, {"error": "workspace_operation_failed"})
 
-    async def run(self, args):
+    def prepare_command(self, argv, root):
+        plan = command_plan(argv, root)
+        if plan["validation_kind"] == "git_diff_check":
+            # Reuse the Git tool's configuration and executable restrictions.
+            from dianstar.tools.mcp.servers.git.workspace import GitWorkspace
+            try:
+                workspace = GitWorkspace([root])
+                workspace.git = plan["argv"][0]
+                context = workspace._context(str(root))
+            except (GitError, ValueError, OSError):
+                raise ValueError("Git validation configuration unavailable") from None
+            plan["argv"] = [*context[2], "diff", "--no-ext-diff", "--no-textconv", "--no-color", *argv[2:]]
+            plan["environment"] = context[1]
+        return plan
+
+    async def run(self, args, *, environment=None):
         root = self.root(args)
         audit = WorkspaceAudit(root, self.security, protected=(self.env_file,
             self.env_file.parent / ".local/config.json", self.env_file.parent / ".local/mcp.json",
@@ -203,6 +223,8 @@ class WorkspaceTools:
         baseline = audit.capture()
         env = {key: value for key, value in os.environ.items() if key.upper() in
             {"PATH", "SYSTEMROOT", "WINDIR", "TEMP", "TMP", "PATHEXT", "USERPROFILE", "HOME", "APPDATA", "LOCALAPPDATA"}}
+        if environment is not None:
+            env = dict(environment)
         env.update(PYTHONIOENCODING="utf-8", GIT_TERMINAL_PROMPT="0", GCM_INTERACTIVE="never")
         process = await asyncio.create_subprocess_exec(*args["argv"], cwd=root, env=env, stdin=asyncio.subprocess.DEVNULL,
             stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.STDOUT,
@@ -266,8 +288,12 @@ class WorkspaceTools:
                 "workspace_list": "列出项目文件，排除敏感路径和常见依赖目录。", "workspace_read": "按行读取项目文本文件。",
                 "workspace_search": "在项目文件内搜索文本。", "workspace_edit": "创建或精确替换项目文件；完整差异须经用户确认。",
                 "workspace_delete": "删除明确的单个项目文件，展示完整删除差异后确认，不递归删除目录。",
-                "workspace_run": "运行项目测试或构建命令；使用 argv 数组，无隐式 shell，执行前须确认。"}[name],
+                "workspace_run": "运行项目验证或构建命令；使用 argv 数组。Python 测试与编译、pip check 和 git diff --check 默认自动执行，其他命令按具体操作确认，后台可强制审批。"}[name],
                 "parameters": {"type": "object", "properties": {**common, **fields}, "required": ["repository", *required], "additionalProperties": False}}}
-            registry[name] = ToolRegistration(tool, "workspace.write" if write else "workspace.read", self.apply if write else self.read, preview if write else None)
+            def automatic(args, name=name):
+                item = self.prepared.get(request_key(name, args))
+                return bool(item and isinstance(item[1], dict) and item[1].get("routine_validation"))
+            registry[name] = ToolRegistration(tool, "workspace.write" if write else "workspace.read", self.apply if write else self.read,
+                                              preview if write else None, auto_approve=automatic if name == "workspace_run" else None)
         self.mcp.authorization.grant("workspace.read", uses=60)
         return registry

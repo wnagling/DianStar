@@ -1,4 +1,4 @@
-"""工具来源台账与引用检查；记录获取证据，不判断结论是否真实。"""
+"""分别记录资料获取与 Git 操作核对，不判断回答的语义结论是否真实。"""
 
 import json
 import re
@@ -7,6 +7,7 @@ from urllib.parse import urlsplit
 from markdown_it import MarkdownIt
 
 from dianstar.tools.local.web_reader import WebError, public_url
+from .git_operations import GitOperationEvidence
 
 
 def canonical_url(value: str) -> str | None:
@@ -66,6 +67,7 @@ def cited_urls(answer: str) -> list[str]:
 class SourceEvidence:
     def __init__(self, history: list[dict] | None = None):
         self.sources = {}
+        self.git_operations = GitOperationEvidence()
         # 只恢复有工具调用对应的工具结果，不采信历史回答或用户粘贴的链接。
         calls = {}
         for message in history or []:
@@ -73,7 +75,7 @@ class SourceEvidence:
                 for call in message.get("tool_calls", []):
                     function = call.get("function", {})
                     if (function.get("name") in {"search_web", "read_webpage"}
-                            or str(function.get("name", "")).startswith("mcp_github__")):
+                            or str(function.get("name", "")).startswith(("mcp_github__", "mcp_git__"))):
                         try:
                             arguments = json.loads(function.get("arguments", "{}"))
                             if isinstance(arguments, dict):
@@ -106,6 +108,8 @@ class SourceEvidence:
                 self.sources[key] = record
 
     def observe(self, name: str, arguments: dict, result: dict, *, historical: bool = False) -> dict:
+        if name.startswith("mcp_git__"):
+            return self.git_operations.observe(name, arguments, result, historical=historical)
         if result.get("error"):
             if name == "read_webpage":
                 evidence = {"kind": "unavailable", "error": result["error"]}
@@ -139,9 +143,17 @@ class SourceEvidence:
         urls = cited_urls(answer)
         if not urls:
             return answer
-        notes = []
-        for index, url in enumerate(urls, 1):
+        notes, operation_notes = [], []
+        for url in urls:
             record = self.sources.get(canonical_url(url))
+            display = url.replace("`", "")
+            if len(display) > 120:
+                display = display[:117] + "..."
+            operation = self.git_operations.describe(url)
+            if operation:
+                operation_notes.append(f"- 目标 {len(operation_notes) + 1}（`{display}`）：{operation}。")
+                if record is None:
+                    continue
             if record is None:
                 label = "未见成功检索或读取记录，引用未核验"
             elif record["kind"] == "unavailable":
@@ -161,8 +173,10 @@ class SourceEvidence:
             if record and record.get("historical"):
                 label += "；来自历史工具记录，非本轮新取得"
             # 按首次出现顺序去重；展示链接文本，核验注记本身不重新创建超链接。
-            display = url.replace("`", "")
-            if len(display) > 120:
-                display = display[:117] + "..."
-            notes.append(f"- 来源 {index}（`{display}`）：{label}。")
-        return answer.rstrip() + "\n\n来源核验（按链接首次出现顺序，仅核对获取记录）：\n" + "\n".join(notes)
+            notes.append(f"- 来源 {len(notes) + 1}（`{display}`）：{label}。")
+        sections = [answer.rstrip()]
+        if operation_notes:
+            sections.append("Git 操作核对：\n" + "\n".join(operation_notes))
+        if notes:
+            sections.append("来源核验（按链接首次出现顺序，仅核对获取记录）：\n" + "\n".join(notes))
+        return "\n\n".join(sections)

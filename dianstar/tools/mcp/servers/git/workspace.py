@@ -213,7 +213,11 @@ class GitWorkspace(PublishMixin, WorkflowMixin, BasicWorkspace):
         token = secrets.token_urlsafe(32)
         self.plans[token] = dict(name=name, repository=repository, arguments=arguments, snapshot=snapshot,
                                  details=details, expires=time.monotonic() + 600, extended=True)
-        return {"prepared": True, "token": token, "description": description}
+        preview = {"prepared": True, "token": token, "description": description}
+        if name == "git_publish":
+            preview["remote_target"] = {"url": self.security.hooks.scanner.redact(details["url"]),
+                                        "remote": details["remote"], "branch": details["target"]}
+        return preview
 
     def prepare(self, name, repository, **arguments):
         self.flags.progress = name in PROGRESS

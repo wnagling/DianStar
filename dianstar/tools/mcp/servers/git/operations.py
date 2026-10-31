@@ -443,7 +443,11 @@ class GitWorkspace(GitReader):
         token = secrets.token_urlsafe(32)
         self.plans[token] = dict(repository=str(root), name=name, arguments=arguments,
                                  snapshot=snapshot, details=details, expires=time.monotonic() + 600)
-        return {"prepared": True, "token": token, "description": description}
+        preview = {"prepared": True, "token": token, "description": description}
+        if name == "git_push":
+            preview["remote_target"] = {"url": self.security.hooks.scanner.redact(details["url"]),
+                                        "remote": details["remote"], "branch": details["target"]}
+        return preview
 
     def apply(self, token):
         plan = self.plans.pop(token, None)
@@ -522,6 +526,7 @@ class GitWorkspace(GitReader):
                     self._query(context, ["update-ref", "refs/remotes/" + details["remote"] + "/" + details["target"], details["head"]])
                     self._query(context, ["config", "--local", "branch." + details["branch"] + ".remote", details["remote"]])
                     self._query(context, ["config", "--local", "branch." + details["branch"] + ".merge", "refs/heads/" + details["target"]])
-                result.update(commit=details["head"], remote=details["remote"], branch=details["target"], remote_verified=True)
+                result.update(commit=details["head"], remote=details["remote"], branch=details["target"], remote_verified=True,
+                              remote_url=self.security.hooks.scanner.redact(details["url"]))
         result.update(success=True, content=self._query(context, ["status", "--porcelain=v1", "--branch", "--untracked-files=all", "--ignore-submodules=all"]).decode(), untrusted=True)
         return result

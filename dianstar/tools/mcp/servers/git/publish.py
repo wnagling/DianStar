@@ -106,4 +106,6 @@ class PublishMixin:
             return {**self._error(error), "operation": "git_publish", "completed_steps": completed,
                     "commit": commit, "remote_verified": False,
                     "failed_step": phase, "outcome_unknown": phase in {"commit", "push"},
+                    "remote_url": self.security.hooks.scanner.redact(details["url"]),
+                    "remote": details["remote"], "branch": details["target"], "repository": str(context[0]),
                     "recovery": "先检查本地与远程状态；已完成步骤保留，不自动重试或回滚。"}

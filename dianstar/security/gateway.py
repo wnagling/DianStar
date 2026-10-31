@@ -49,9 +49,13 @@ class ToolGateway:
     def available_schemas(self):
         return [entry.schema for name, entry in self.registry.items() if self.policy_for(name, entry).enabled]
 
+    def uses_default_approval(self, name, registration):
+        return name not in self.policies and registration.capability not in self.policies
+
     def policy_information(self):
         return {name: {"enabled": self.policy_for(name, entry).enabled,
-                       "requires_approval": bool(entry.approval_description) and self.policy_for(name, entry).requires_approval}
+                       "requires_approval": bool(entry.approval_description) and self.policy_for(name, entry).requires_approval,
+                       **({"conditional_approval": True} if entry.auto_approve and self.uses_default_approval(name, entry) else {})}
                 for name, entry in self.registry.items()}
 
     async def execute(self, action: ToolAction) -> Observation:
@@ -74,7 +78,7 @@ class ToolGateway:
         binding = request_key(action.name, checked)
         if (error and error["error"] == "authorization_required"
                 and registration.approval_description is not None
-                and (self.request_approval is not None or not policy.requires_approval)
+                and (self.request_approval is not None or not policy.requires_approval or registration.auto_approve is not None)
                 and binding not in self._declined):
             revision = self.authorization.revision(registration.capability)
             try:
@@ -88,11 +92,24 @@ class ToolGateway:
             if (not self.authorization.active or self.authorization.revision(registration.capability) != revision
                     or self.registry.get(action.name) is not registration):
                 return Observation(action, {"error": "authorization_changed"})
-            if policy.requires_approval:
+            requires_approval = policy.requires_approval
+            if registration.auto_approve is not None and self.uses_default_approval(action.name, registration):
+                try:
+                    automatic = registration.auto_approve(dict(checked))
+                    if type(automatic) is not bool:
+                        if inspect.iscoroutine(automatic):
+                            automatic.close()
+                        raise ValueError("Invalid automatic approval decision")
+                except Exception:
+                    return Observation(action, {"error": "tool_preparation_failed"})
+                requires_approval = not automatic
+            if requires_approval:
+                if self.request_approval is None:
+                    return Observation(action, error)
                 approved = await self.request_approval({"request_id": self.authorization.request_id,
                     "description": description, "summary": approval_summary(action.name, checked, description)})
             else:
-                # A trusted backend policy can waive the prompt, never preflight.
+                # Trusted policies/classifiers can waive prompts, never preflight.
                 approved = True
             # A cancellation/revocation may occur while the dialog is open.
             if self.registry.get(action.name) is not registration:

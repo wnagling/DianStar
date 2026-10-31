@@ -72,18 +72,31 @@ class GitAdapter:
             value = self._git_result(await self.connections["git"].call(name, arguments))
             if value.get("prepared") is not True or not isinstance(value.get("token"), str) or not isinstance(value.get("description"), str):
                 raise ToolPreparationError("git_preparation_failed", "Git 操作预览无效。")
-            self.prepared[request_key(name, arguments)] = value["token"]
+            target = value.get("remote_target") if name in {"git_push", "git_publish"} else None
+            if target is not None and (not isinstance(target, dict) or set(target) != {"url", "remote", "branch"}
+                    or not isinstance(target["url"], str) or not target["url"] or len(target["url"]) > 4000
+                    or target["remote"] != arguments.get("remote", "origin") or target["branch"] != arguments.get("branch")):
+                raise ToolPreparationError("git_preparation_failed", "Git 预览目标与本次请求不一致。")
+            self.prepared[request_key(name, arguments)] = {"token": value["token"], "remote_target": target}
             return "\n".join("".join(char for char in line if ord(char) >= 32 or char == "\t")
                              for line in value["description"].splitlines())
         except (OSError, ValueError, MCPUnavailable, TimeoutError):
             raise ToolPreparationError("git_preparation_failed", "Git 预览失败或超时，未申请执行。") from None
 
     async def apply_git(self, name, arguments):
-        token = self.prepared.pop(request_key(name, arguments), None)
-        if token is None or not self.authorization.active:
+        prepared = self.prepared.pop(request_key(name, arguments), None)
+        if prepared is None or not self.authorization.active:
             return {"error": "git_not_prepared", "message": "没有有效的本轮已批准操作。"}
+        def with_origin(result):
+            result = dict(result)
+            target = prepared["remote_target"]
+            if target:
+                for key, value in {"operation": name, "repository": arguments["repository"], "remote": target["remote"],
+                                   "branch": target["branch"], "remote_url": target["url"]}.items():
+                    result.setdefault(key, value)
+            return {**result, "server": "git", "tool": name}
         try:
-            result = self._git_result(await self.connections["git"].call("git_apply", {"token": token}),
+            result = self._git_result(await self.connections["git"].call("git_apply", {"token": prepared["token"]}),
                                       allow_operation_error=True)
             content = result.get("content", "")
             result["content"] = content[:24000]
@@ -95,8 +108,8 @@ class GitAdapter:
                 self.repositories.add(created)
             if result.get("removed_repository"):
                 self.repositories.discard(result["removed_repository"])
-            return result
+            return with_origin(result)
         except ToolPreparationError as error:
-            return error.result
+            return with_origin(error.result)
         except (MCPUnavailable, TimeoutError):
-            return {"error": "git_outcome_unknown", "message": "Git 执行连接中断，请先查询状态，不要自动重试。"}
+            return with_origin({"error": "git_outcome_unknown", "message": "Git 执行连接中断，请先查询状态，不要自动重试。"})

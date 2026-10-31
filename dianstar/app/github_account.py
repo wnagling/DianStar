@@ -1,11 +1,11 @@
 """User-driven GitHub login; never a model tool or conversation message."""
 import asyncio
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 import uuid
 
 import httpx
 
-from dianstar.config.github_account import cached_token, load_account, save_account
+from dianstar.config.github_account import cached_token, load_account, save_account, MAX_PENDING_CLEANUP
 from dianstar.platform.github_credentials import CredentialManager, GitHubLoginError, LOGIN, credential_input
 
 
@@ -21,6 +21,61 @@ class GitHubAccount:
         self.env_file, self.root = env_file, env_file.parent
         self.manager = manager or CredentialManager()
         self.transport = transport
+        self._operation_lock = asyncio.Lock()
+
+    @staticmethod
+    def _pending(profile):
+        pending = [dict(entry) for entry in profile.get("pending_cleanup", [])]
+        # Preserve cleanup records produced by the older logout implementation.
+        if profile["mode"] == "signed_out" and "namespace" in profile:
+            if not any(entry["namespace"] == profile["namespace"] for entry in pending):
+                pending.append({key: profile[key] for key in ("login", "namespace")})
+        return pending
+
+    @staticmethod
+    def _with_pending(profile, pending):
+        result = {key: value for key, value in profile.items() if key != "pending_cleanup"}
+        if result["mode"] == "signed_out" and not any(entry["namespace"] == result.get("namespace") for entry in pending):
+            result = {"mode": "signed_out"}
+        if pending:
+            result["pending_cleanup"] = pending
+        return result
+
+    def _cleanup_notice(self, status):
+        try:
+            pending = self._pending(load_account(self.root))
+        except (ValueError, OSError):
+            return replace(status, message=status.message + " 清理记录暂时无法读取，请检查账号状态。")
+        if pending:
+            return replace(status, message=status.message + " 另有登录记录尚未清理；可再次检查账号状态重试。")
+        return status
+
+    async def _retry_cleanup(self):
+        profile = load_account(self.root)
+        pending = self._pending(profile)
+        if not pending:
+            return
+        # Journal before contacting the vault, including legacy pending logout.
+        try:
+            save_account(self.root, self._with_pending(profile, pending))
+        except (ValueError, OSError):
+            return
+        for entry in pending:
+            current = load_account(self.root)
+            if current["mode"] == "managed" and current["namespace"] == entry["namespace"]:
+                continue
+            try:
+                await self.manager.erase(entry["namespace"], entry["login"])
+            except (GitHubLoginError, OSError):
+                # Retain this and later entries; a failed vault must not cause
+                # repeated helper timeouts for every recorded account.
+                return
+            current = load_account(self.root)
+            remaining = [item for item in self._pending(current) if item["namespace"] != entry["namespace"]]
+            try:
+                save_account(self.root, self._with_pending(current, remaining))
+            except (ValueError, OSError):
+                return
 
     async def _verify(self, token):
         credential_input(token=token)
@@ -45,6 +100,14 @@ class GitHubAccount:
             raise GitHubLoginError("无法连接 GitHub，请检查网络后重试。") from None
 
     async def check(self):
+        async with self._operation_lock:
+            try:
+                await self._retry_cleanup()
+                return self._cleanup_notice(await self._check())
+            except (ValueError, OSError):
+                return AccountStatus("unavailable", message="账号或待清理记录无法读取，请稍后重试。")
+
+    async def _check(self):
         try:
             profile = load_account(self.root)
             if profile["mode"] == "signed_out":
@@ -71,11 +134,28 @@ class GitHubAccount:
         try:
             if not login:
                 login, _ = await self.manager.read(namespace)
-            await self.manager.erase(namespace, login)
         except (GitHubLoginError, OSError):
-            pass
+            return
+        profile = load_account(self.root)
+        if profile["mode"] == "managed" and profile["namespace"] == namespace:
+            return
+        pending = self._pending(profile)
+        if not any(entry["namespace"] == namespace for entry in pending):
+            pending.append({"login": login, "namespace": namespace})
+        save_account(self.root, self._with_pending(profile, pending))
+        await self._retry_cleanup()
 
     async def login(self, token=None):
+        async with self._operation_lock:
+            return await self._login(token)
+
+    async def _login(self, token=None):
+        try:
+            previous = load_account(self.root)
+        except ValueError:
+            previous = {"mode": "signed_out"}
+        if len(self._pending(previous)) >= MAX_PENDING_CLEANUP - 1:
+            raise GitHubLoginError("待清理的登录记录过多，请先检查账号状态重试清理。")
         namespace = "dianstar-" + uuid.uuid4().hex
         activated, touched, login = False, False, ""
         try:
@@ -99,26 +179,33 @@ class GitHubAccount:
                 previous = load_account(self.root)
             except ValueError:
                 previous = {"mode": "signed_out"}
-            save_account(self.root, {"mode": "managed", "login": login, "namespace": namespace})
-            activated = True
+            pending = self._pending(previous)
             if previous["mode"] == "managed":
-                await self._cleanup(previous["namespace"], previous["login"])
-            return AccountStatus("connected", login, "登录成功，后续启动无需重复登录。")
+                pending.append({key: previous[key] for key in ("login", "namespace")})
+            # Activate the new account and retain the old cleanup reference in
+            # the same atomic metadata replacement. No token enters this file.
+            save_account(self.root, self._with_pending({"mode": "managed", "login": login, "namespace": namespace}, pending))
+            activated = True
+            await self._retry_cleanup()
+            return self._cleanup_notice(AccountStatus("connected", login, "登录成功，后续启动无需重复登录。"))
         finally:
             if not activated and touched:
                 await self._cleanup(namespace, login)
 
     async def logout(self):
+        async with self._operation_lock:
+            return await self._logout()
+
+    async def _logout(self):
         try:
             previous = load_account(self.root)
         except ValueError:
             previous = {"mode": "signed_out"}
-        pending = {"mode": "signed_out", **({key: previous[key] for key in ("login", "namespace")} if "namespace" in previous else {})}
-        save_account(self.root, pending)
-        if "namespace" in previous:
-            try:
-                await self.manager.erase(previous["namespace"], previous["login"])
-            except (GitHubLoginError, OSError):
-                return AccountStatus("signed_out", message="已退出此应用；系统保存的登录未能清理，可稍后重试。")
-        save_account(self.root, {"mode": "signed_out"})
-        return AccountStatus("signed_out", message="已退出 DianStar 的 GitHub 登录，其他 Git 工具的登录不受影响。")
+        pending = self._pending(previous)
+        if previous["mode"] == "managed":
+            pending.append({key: previous[key] for key in ("login", "namespace")})
+        state = {"mode": "signed_out", **({key: previous[key] for key in ("login", "namespace")} if "namespace" in previous else {})}
+        # Disabling the account and recording cleanup are one atomic update.
+        save_account(self.root, self._with_pending(state, pending))
+        await self._retry_cleanup()
+        return self._cleanup_notice(AccountStatus("signed_out", message="已退出 DianStar 的 GitHub 登录，其他 Git 工具的登录不受影响。"))

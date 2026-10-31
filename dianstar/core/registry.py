@@ -13,3 +13,6 @@ class ToolRegistration:
     approval_description: Callable[[dict], str | Awaitable[str]] | None = None
     # Flat, application-owned dependencies for a composite operation.
     required_tools: tuple[str, ...] = ()
+    # A trusted tool can classify its already-prepared operation as routine.
+    # Explicit backend policies override this default, and preflight still runs.
+    auto_approve: Callable[[dict], bool] | None = None

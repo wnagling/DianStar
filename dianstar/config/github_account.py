@@ -7,21 +7,42 @@ import tempfile
 
 from dianstar.platform.github_credentials import LOGIN, NAMESPACE, read_stored_token
 
+MAX_PENDING_CLEANUP = 16
+
 
 def account_file(root):
     return Path(root) / ".local/github_account.json"
 
 
 def validate_account(data):
-    if not isinstance(data, dict) or set(data) - {"mode", "login", "namespace"}:
+    if not isinstance(data, dict) or set(data) - {"mode", "login", "namespace", "pending_cleanup"}:
         raise ValueError("GitHub 登录状态无效。")
-    if data.get("mode") == "signed_out" and set(data) == {"mode"}:
-        return dict(data)
-    if (data.get("mode") not in {"managed", "signed_out"}
+    fields = set(data) - {"pending_cleanup"}
+    plain = data.get("mode") in {"signed_out", "legacy"} and fields == {"mode"}
+    if not plain and (fields != {"mode", "login", "namespace"} or data.get("mode") not in {"managed", "signed_out"}
             or not isinstance(data.get("login"), str) or not LOGIN.fullmatch(data["login"])
             or not isinstance(data.get("namespace"), str) or not NAMESPACE.fullmatch(data["namespace"])):
         raise ValueError("GitHub 登录状态无效。")
-    return dict(data)
+    pending = data.get("pending_cleanup", [])
+    if (not isinstance(pending, list) or len(pending) > MAX_PENDING_CLEANUP
+            or (data.get("mode") == "managed" and len(pending) >= MAX_PENDING_CLEANUP)):
+        raise ValueError("GitHub 待清理记录无效。")
+    seen = set()
+    for entry in pending:
+        if (not isinstance(entry, dict) or set(entry) != {"login", "namespace"}
+                or not isinstance(entry["login"], str) or not LOGIN.fullmatch(entry["login"])
+                or not isinstance(entry["namespace"], str) or not NAMESPACE.fullmatch(entry["namespace"])
+                or entry["namespace"] in seen
+                or (data.get("mode") == "managed" and entry["namespace"] == data["namespace"])):
+            raise ValueError("GitHub 待清理记录无效。")
+        seen.add(entry["namespace"])
+    if (data.get("mode") == "signed_out" and "namespace" in data
+            and data["namespace"] not in seen and len(pending) >= MAX_PENDING_CLEANUP):
+        raise ValueError("GitHub 待清理记录无效。")
+    result = {key: value for key, value in data.items() if key != "pending_cleanup"}
+    if pending:
+        result["pending_cleanup"] = [dict(entry) for entry in pending]
+    return result
 
 
 def load_account(root):
