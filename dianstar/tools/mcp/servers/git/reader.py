@@ -6,6 +6,7 @@ from pathlib import Path
 import shutil
 import subprocess
 import threading
+from dianstar.security.system_paths import check_host_path
 
 
 MAX_OUTPUT = 24000
@@ -20,6 +21,7 @@ class GitReader:
 
     def check_repository(self, repository: str) -> Path:
         root = Path(repository)
+        check_host_path(root, project=True)
         if not root.is_absolute():
             raise ValueError("仓库必须为已配置的绝对路径。")
         resolved = root.resolve(strict=True)

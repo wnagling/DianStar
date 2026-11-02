@@ -7,9 +7,10 @@ from textual.widgets import Label, RichLog
 from dianstar.ui.tui.art.welcome import welcome_art_lines
 from dianstar.ui.tui.rendering import ChatMarkdown, StreamLines
 from dianstar.ui.tui.widgets import ChatLog
+from .tool_view import ToolView
 
 
-class ChatView:
+class ChatView(ToolView):
     """Rendering behavior used by the Textual application."""
 
     def _render_history(self) -> None:
@@ -18,7 +19,10 @@ class ChatView:
         self._close_copy_menu()
         self._clear_stream()
         self._reset_active_thinking()
+        self._reset_active_tools()
         self._expanded_thinking.clear()
+        self._expanded_tools.clear()
+        self._expanded_tool_items.clear()
         self._chat_blocks = []
         # 旧会话把思考保存在模型消息中，按用户轮次对应，避免重复问题串轮。
         reasoning_turns = []
@@ -31,18 +35,35 @@ class ChatView:
                     reasoning_turns[-1].append(content)
         compatible = (len(self.conversation.messages) % 2 == 0
                       and len(reasoning_turns) == len(self.conversation.messages) // 2)
+        legacy_tools = []
+        if compatible and any(message.get("role") == "assistant" and "tool_activity" not in message
+                              for message in self.conversation.messages):
+            from dianstar.app.tool_events import historical_activity
+            from dianstar.security.content_guard import ContentScanner, known_credentials
+            legacy_tools = historical_activity(self.conversation.model_messages, ContentScanner(known=known_credentials(self.env_file)))
         for index, message in enumerate(self.conversation.messages):
             reasoning = message.get("reasoning_content", "")
             if message["role"] == "assistant" and not reasoning and compatible:
                 reasoning = "\n\n".join(reasoning_turns[index // 2])
             if message["role"] == "assistant" and reasoning:
                 self._chat_blocks.append({"kind": "thinking", "content": reasoning})
+            activity = message.get("tool_activity")
+            if message["role"] == "assistant" and activity is None and legacy_tools:
+                activity = legacy_tools[index // 2]
+            if message["role"] == "assistant" and activity:
+                from copy import deepcopy
+                calls = deepcopy(activity)
+                for item in calls:
+                    if item["status"] == "running":
+                        item.update(status="interrupted", summary="历史记录未包含完成结果，请核对任务状态。")
+                self._chat_blocks.append({"kind": "tools", "calls": calls})
             self._chat_blocks.append({"kind": "message", **message})
         self._redraw_chat()
 
 
     def _redraw_chat(self) -> None:
         chat = self.query_one("#chat", RichLog)
+        follow, scroll_y = chat.is_vertical_scroll_end, chat.scroll_y
         chat.clear()
         if self._chat_blocks:
             self._welcome_only = False
@@ -51,6 +72,10 @@ class ChatView:
                     if index == self._active_thinking:
                         self._thinking_tail_start = len(chat.lines)
                     chat.write(self._thinking_panel(index), width=max(1, chat.scrollable_content_region.width))
+                elif block["kind"] == "tools":
+                    if index == self._active_tools:
+                        self._tool_tail_start = len(chat.lines)
+                    chat.write(self._tools_panel(index), width=max(1, chat.scrollable_content_region.width))
                 elif block["kind"] == "stream":
                     self._begin_stream_render()
                     self._paint_stream()
@@ -65,6 +90,8 @@ class ChatView:
             for line in art:
                 chat.write(line)
         self.query_one("#session-name", Label).update(self.conversation.name or "未命名会话")
+        if not follow:
+            chat.call_after_refresh(chat.scroll_to, y=scroll_y, animate=False)
 
 
     def _show_message(self, role: str, content: str) -> None:

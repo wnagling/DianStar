@@ -84,25 +84,26 @@ class WorkspaceToolTests(unittest.IsolatedAsyncioTestCase):
         return (await self.gateway.execute(ToolAction(name, {'repository': str(self.root), **args}))).result
 
     async def test_create_read_search_replace_and_empty_replacement(self):
-        result = await self.call('workspace_edit', path='src/example.txt', mode='create', new_text='hello\nworld\n')
+        result = await self.call('write', path='src/example.txt', content='hello\nworld\n')
         self.assertTrue(result['success'])
-        value = await self.call('workspace_read', path='src/example.txt')
+        value = await self.call('read', path='src/example.txt')
         self.assertIn('1: hello', value['content'])
-        self.assertIn('src/example.txt:2: world', (await self.call('workspace_search', query='world'))['content'])
-        self.assertTrue((await self.call('workspace_edit', path='src/example.txt', old_text='world\n', new_text=''))['success'])
+        self.assertIn('src/example.txt:2: world', (await self.call('grep', pattern='world'))['content'])
+        self.assertTrue((await self.call('edit', path='src/example.txt', old_string='world\n', new_string=''))['success'])
         self.assertEqual((self.root / 'src/example.txt').read_text(), 'hello\n')
 
     async def test_paths_secrets_and_stale_edit_are_rejected(self):
         for path in ('../outside', '.env', '.git/config', 'folder/../../outside'):
-            self.assertIn('error', await self.call('workspace_read', path=path))
+            self.assertIn('error', await self.call('read', path=path))
         target = self.root / 'one.txt'
         target.write_text('before')
+        await self.call('read', path='one.txt')
         async def edit_during_approval(_):
             target.write_text('user edit')
             return True
         self.gateway.request_approval = edit_during_approval
-        result = await self.call('workspace_edit', path='one.txt', old_text='before', new_text='after')
-        self.assertEqual(result['error'], 'workspace_file_changed')
+        result = await self.call('edit', path='one.txt', old_string='before', new_string='after')
+        self.assertEqual(result['error'], 'file_changed')
         self.assertEqual(target.read_text(), 'user edit')
 
     async def test_command_exit_timeout_and_secret_environment(self):
@@ -127,8 +128,8 @@ class WorkspaceToolTests(unittest.IsolatedAsyncioTestCase):
     async def test_read_only_configuration_does_not_expose_edit_or_command(self):
         self.mcp.settings = replace(self.mcp.settings, workspace_write_enabled=False)
         names = self.tools.registrations()
-        self.assertIn('workspace_read', names)
-        self.assertNotIn('workspace_edit', names)
+        self.assertIn('read', names)
+        self.assertNotIn('edit', names)
         self.assertNotIn('workspace_run', names)
 
     async def test_delete_requires_confirmation_and_only_deletes_named_file(self):

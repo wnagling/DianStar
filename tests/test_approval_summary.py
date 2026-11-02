@@ -24,6 +24,20 @@ RAW = json.dumps({"操作": "git_clone", "仓库": ARGS["repository"], "完整�
 
 
 class ApprovalSummaryTests(unittest.TestCase):
+    def test_file_tools_name_action_and_target_without_dumping_source(self):
+        arguments = {"repository": "project", "path": "src/example.py", "content": "private-looking-source-body"}
+        create = approval_summary("write", arguments, json.dumps({"操作": "创建项目文件"}))
+        overwrite = approval_summary("write", arguments, json.dumps({"操作": "修改项目文件"}))
+        edit = approval_summary("edit", {"repository": "project", "path": "src/example.py",
+            "old_string": "old source", "new_string": "new source"}, "trusted preview")
+        self.assertIn("是否创建", create)
+        self.assertIn("是否完整写入", overwrite)
+        self.assertIn("是否修改", edit)
+        for summary in (create, overwrite, edit):
+            self.assertIn("src/example.py", summary)
+            self.assertNotIn("private-looking-source-body", summary)
+            self.assertNotIn("{", summary)
+
     def test_settings_change_names_exact_project_and_omits_unchanged_machine_fields(self):
         raw = json.dumps({"修改前": {"git_enabled": None, "git_repositories": ["existing"], "github_executable": ""},
                           "修改后": {"git_enabled": None, "git_repositories": ["existing", r"C:\Users\wang\Desktop\agentTry"], "github_executable": ""}})
@@ -58,7 +72,7 @@ class ApprovalSummaryTests(unittest.TestCase):
         self.assertIn("改写远程分支历史", summary)
         self.assertIn("https://github.com/owner/repo.git", summary)
         self.assertIn("main", summary)
-        self.assertIn("可能无法恢复", approval_summary("workspace_delete", {"repository": "project", "path": "notes.md"}, RAW))
+        self.assertIn("本机恢复记录", approval_summary("workspace_delete", {"repository": "project", "path": "notes.md"}, RAW))
 
     def test_github_public_visibility_and_post_content_are_shown(self):
         summary = approval_summary("github_repository_settings_update", {"owner": "owner", "repo": "repo", "changes": {"visibility": "public"}}, RAW)
@@ -120,6 +134,33 @@ class ApprovalUITests(unittest.IsolatedAsyncioTestCase):
                 await pilot.click("#permission-confirm")
                 await asyncio.wait_for(worker.wait(), 5)
             self.assertEqual(choices, [True])
+
+    async def test_long_publish_message_keeps_scope_visible_without_scrolling(self):
+        args = {"repository": r"C:\Users\wang\Desktop\agentTry", "files": [f"dianstar/module_{i}.py" for i in range(80)],
+                "message": "feat: 完善 Git 核对、验证审批与账号清理" + "很长的标题" * 30 + "\n\n完整说明正文" * 30,
+                "branch": "main", "remote": "origin"}
+        description = ("目标：https://github.com/wnagling/DianStar.git → main\n提交说明：" + args["message"]
+                       + "\n文件：\n" + "\n".join(args["files"]))
+        request = {"description": description, "summary": approval_summary("mcp_git__git_publish", args, description)}
+        self.assertNotIn("完整说明正文", request["summary"])
+        self.assertLess(request["summary"].index("文件范围"), request["summary"].index("提交说明"))
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            app = DianStarApp(Conversation.create(root / "conversations"), config_file=root / ".local/config.json", env_file=root / ".env")
+            async with app.run_test(size=(80, 24)) as pilot:
+                worker = app.run_worker(app._approve_permission(request))
+                await pilot.pause(0.2)
+                screen = app.screen
+                self.assertIn("80 个文件", str(screen.query_one("#permission-description", Static).render()))
+                self.assertEqual(screen.query_one("#permission-scroll").max_scroll_y, 0)
+                await pilot.click("#permission-details-toggle")
+                await pilot.pause()
+                details = str(screen.query_one("#permission-raw-details", Static).render())
+                self.assertIn(args["message"], details)
+                self.assertIn("module_79.py", details)
+                self.assertLessEqual(screen.query_one("#permission-confirm", Button).region.bottom, 24)
+                await pilot.press("escape")
+                await asyncio.wait_for(worker.wait(), 5)
 
     async def test_plain_summary_and_collapsed_details_fit_and_cancel_or_confirm(self):
         for size in ((80, 24), (100, 32), (140, 60)):

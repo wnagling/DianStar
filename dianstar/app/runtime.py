@@ -1,6 +1,8 @@
 # 编排一轮提问：调用模型与工具，并更新成功的对话历史。
 
 import json
+import asyncio
+import uuid
 from dataclasses import replace
 from pathlib import Path
 from typing import Awaitable, Callable, Mapping
@@ -29,6 +31,16 @@ from dianstar.app.project_access import registrations as project_access_tools
 from dianstar.app.mcp_startup import resolve_connections
 from dianstar.tools.local.github_admin import GitHubAdmin
 from dianstar.tools.local.workspace import WorkspaceTools
+from dianstar.tools.local.files import FILE_TOOL_NAMES, migrate_file_policies
+from dianstar.core.scheduler import BatchExecutor
+from dianstar.security.content_guard import ContentScanner, known_credentials
+from dianstar.app.turn_log import TurnLog
+from dianstar.app.change_review import ChangeReview
+from dianstar.app.tool_resources import ToolResources
+from dianstar.app.task_scope import TaskScope, task_git_defaults
+from dianstar.app.tool_events import ToolEvents
+from dianstar.app.storage_lifecycle import finish_storage
+from dianstar.tools.local.files.io import blocking
 
 
 async def run_turn(
@@ -43,6 +55,8 @@ async def run_turn(
     project_directory: Path | None = None,
     tool_policies: Mapping[str, ToolPolicy] | None = None,
     allow_backend_configuration: bool = False,
+    on_tool: Callable[[dict], None] | None = None,
+    conversation_id: str | None = None,
 ) -> str:
     """Run one bounded agent task and return the model's final text."""
     if not question.strip():
@@ -65,13 +79,27 @@ async def run_turn(
         mcp_settings = MCPSettings(git_enabled=False, github_enabled=False)
         mcp_error = "后台工具配置损坏，请恢复最近的配置备份后重试。"
     project_directory = (project_directory or Path.cwd()).absolute()
+    task_scope = TaskScope.from_question(question, project_directory)
     active_settings, startup_status = resolve_connections(mcp_settings, env_file, project_directory)
     automatic_repositories = set(active_settings.git_repositories) - set(mcp_settings.git_repositories)
-    async with client, WebTools(search_settings, env_file, on_paid_web, authorization=authorization) as web, \
+    approval_lock = asyncio.Lock()
+    async def confirm(request):
+        async with approval_lock:
+            return await on_permission(request)
+    async def paid(request):
+        async with approval_lock:
+            return await on_paid_web(request)
+    log = None
+    workspace = None
+    async with client, WebTools(search_settings, env_file, paid if on_paid_web else None, authorization=authorization) as web, \
             MCPTools(active_settings, env_file, authorization, allow_clone=mcp_settings.git_enabled is None,
                      confirm_destinations=mcp_settings.git_write_enabled is None) as mcp:
         mcp.status.update(startup_status)
         try:
+            log = TurnLog(authorization.request_id, ContentScanner(known=known_credentials(env_file,
+                extra=(mcp.github.token(),) if getattr(mcp, "github", None) else ())), conversation_id=conversation_id)
+            workspace = WorkspaceTools(mcp, env_file, conversation_id=conversation_id, task_scope=task_scope)
+            review = ChangeReview(lambda: workspace, log)
             builtin_registry, act_web = build_local_registry(web, evidence, env_file, search_settings)
             # Built-ins and MCP tools are registered separately, then share one execution gateway.
             tool_registry = dict(builtin_registry)
@@ -83,7 +111,7 @@ async def run_turn(
                 model=settings.default_model,
             )
 
-            gateway = ToolGateway(authorization, tool_registry, on_permission, policies=tool_policies)
+            gateway = ToolGateway(authorization, tool_registry, confirm if on_permission else None, policies=migrate_file_policies(tool_policies))
             def save_repositories(repositories):
                 nonlocal mcp_settings
                 if load_mcp_settings(mcp_path) != mcp_settings:
@@ -92,12 +120,12 @@ async def run_turn(
                 mcp_settings = save_mcp_settings(replace(mcp_settings, git_repositories=saved), mcp_path)
             mcp.on_repositories_changed = save_repositories
             async def reconnect_mcp(settings, *, directory=None):
-                nonlocal mcp_settings, automatic_repositories, active_settings, project_directory
+                nonlocal mcp_settings, automatic_repositories, active_settings, project_directory, workspace
                 if directory is not None:
                     project_directory = directory
                 await mcp.__aexit__(None, None, None)
                 for name in list(tool_registry):
-                    if name.startswith(("mcp_git__", "mcp_github__", "github_repository_", "github_branch_", "github_collaborators", "workspace_")):
+                    if name in {"bash", "shell"} or name in FILE_TOOL_NAMES or name.startswith(("mcp_git__", "mcp_github__", "github_repository_", "github_branch_", "github_collaborators", "workspace_")):
                         tool_registry.pop(name)
                 active_settings, status = resolve_connections(settings, env_file, project_directory)
                 automatic_repositories = set(active_settings.git_repositories) - set(settings.git_repositories)
@@ -107,21 +135,87 @@ async def run_turn(
                 mcp_settings = settings
                 await mcp.__aenter__()
                 mcp.status.update(status)
-                tool_registry.update(mcp.registry)
+                tool_registry.update(task_git_defaults(mcp.registry, task_scope))
                 tool_registry.update(GitHubAdmin(active_settings, env_file, authorization).registrations())
-                tool_registry.update(WorkspaceTools(mcp, env_file).registrations())
+                workspace = WorkspaceTools(mcp, env_file, conversation_id=conversation_id, task_scope=task_scope, storage_manager=workspace.storage.manager)
+                tool_registry.update(workspace.registrations())
+                tool_registry.update(review.registrations())
                 session.tools = gateway.available_schemas()
             # Internal settings are not a step in ordinary coding tasks.
             if allow_backend_configuration:
                 tool_registry.update(mcp_configuration_tools(mcp_path, reconnect_mcp))
-            tool_registry.update(project_access_tools(mcp_path, reconnect_mcp, lambda: project_directory))
+            tool_registry.update(project_access_tools(mcp_path, reconnect_mcp, lambda: project_directory, question=question))
 
             async def act(action: ToolAction) -> Observation:
                 result = await gateway.execute(action)
                 if action.name.startswith(("mcp_github__", "mcp_git__")):
                     result = Observation(action, evidence.observe(action.name, action.arguments, result.result))
-                session.observe(action, json.dumps(result.result, ensure_ascii=False))
                 return result
+
+            started_registrations = {}
+            tool_events = ToolEvents(log.scanner, authorization.request_id, conversation_id)
+            def notify(event):
+                if on_tool:
+                    try:
+                        on_tool(event)
+                    except Exception:
+                        pass
+            async def started(action):
+                started_registrations[action.call_id] = tool_registry.get(action.name)
+                await blocking(lambda cancel: log.append({"event": "started", "call_id": action.call_id,
+                    "tool": action.name, "arguments": action.arguments}))
+                event = tool_events.started(action)
+                notify({**event, "activity": event["title"]})
+
+            async def completed(observation):
+                review.observe(observation, started_registrations.get(observation.action.call_id))
+                await blocking(lambda cancel: log.append({"event": "completed", "call_id": observation.action.call_id,
+                    "tool": observation.action.name, "result": observation.result}))
+                notify(tool_events.completed(observation))
+
+            resources = ToolResources(tool_registry, lambda: workspace, mcp)
+            executor = BatchExecutor(tool_registry, act, on_started=started, on_completed=completed, resources=resources)
+            async def publish_review(remaining=None):
+                entry = tool_registry.get("review_changes")
+                if entry is None or not gateway.policy_for("review_changes", entry).enabled:
+                    return False
+                action = ToolAction("review_changes", {}, "review_" + uuid.uuid4().hex, "{}")
+                await started(action)
+                result = await act(action)
+                await completed(result)
+                session.application_result(action, {"origin": "application_change_review", "remaining_decisions": remaining,
+                    **result.result})
+                return True
+
+            async def execute_batch(actions):
+                generation = review.generation
+                await blocking(lambda cancel: log.append({"event": "batch", "calls": [
+                    {"call_id": action.call_id, "tool": action.name, "arguments": action.arguments} for action in actions]}))
+                try:
+                    results = await executor(actions)
+                finally:
+                    for observation in executor.last_results:
+                        session.observe(observation.action, json.dumps(observation.result, ensure_ascii=False))
+                if review.generation != generation:
+                    await publish_review()
+                return results
+
+            async def before_finish(proposed, remaining):
+                if await review.ready():
+                    return True
+                entry = tool_registry.get("review_changes")
+                if entry is None or not gateway.policy_for("review_changes", entry).enabled:
+                    return True  # Honest unverified footer; never bypass a denied read.
+                session.reject_final(proposed)
+                await publish_review(remaining)
+                return False
+
+            budget_exhausted = False
+            async def exhausted(observations):
+                nonlocal budget_exhausted
+                budget_exhausted = True
+                await blocking(lambda cancel: log.finish("budget_exhausted"))
+                return "本轮已达到 16 次模型决策上限，未额外调用模型。已执行结果和恢复编号已保存。\n\n" + (review.summary() or f"已记录 {len(observations)} 项工具结果；任务记录：{log.id}。")
 
             if mcp_error:
                 mcp.status["configuration"] = {"state": "invalid", "message": mcp_error}
@@ -129,13 +223,13 @@ async def run_turn(
                 info = mcp.information()
                 policies = gateway.policy_information()
                 info["tool_policies"] = policies
-                info["tools"] = [name for name in info["tools"] if policies[name]["enabled"]]
+                info["tools"] = [name for name in tool_registry if policies[name]["enabled"]]
                 modifications = [name for name, entry in tool_registry.items()
                     if entry.approval_description is not None and policies[name]["enabled"]
-                    and name.startswith(("mcp_git__", "mcp_github__", "workspace_", "github_"))]
+                    and (name in FILE_TOOL_NAMES or name.startswith(("mcp_git__", "mcp_github__", "workspace_", "github_")))]
                 info["read_only"] = not modifications
                 info["git_repository_writes_enabled"] = any(name.startswith("mcp_git__") and name != "mcp_git__git_clone" for name in modifications)
-                info["workspace_writes_enabled"] = any(name.startswith("workspace_") for name in modifications)
+                info["workspace_writes_enabled"] = any(name in FILE_TOOL_NAMES or name.startswith("workspace_") for name in modifications)
                 for prefix, key in (("mcp_git__", "git_writes_require_approval"), ("mcp_github__", "github_writes_require_approval")):
                     info[key] = any(policies[name]["requires_approval"] for name in modifications if name.startswith(prefix))
                 info["clone_destination_requires_approval"] = "mcp_git__git_clone" in modifications and policies["mcp_git__git_clone"]["requires_approval"]
@@ -144,20 +238,49 @@ async def run_turn(
                 info["configuration_file"] = str(mcp_path)
                 info["configuration_exists"] = mcp_path.exists()
                 info["project_directory"] = str(project_directory)
+                info["scratch_workspaces"] = list(workspace.storage.manager.scratch_roots)
                 info["connection_modes"] = {"git": "automatic" if mcp_settings.git_enabled is None else mcp_settings.git_enabled,
                                             "github": "automatic" if mcp_settings.github_enabled is None else mcp_settings.github_enabled}
                 return Observation(action, info)
             tool_registry["mcp_status"] = ToolRegistration(MCP_STATUS_TOOL, "permissions.read", act_mcp_status)
-            tool_registry.update(mcp.registry)
+            tool_registry.update(task_git_defaults(mcp.registry, task_scope))
             tool_registry.update(GitHubAdmin(active_settings, env_file, authorization).registrations())
-            tool_registry.update(WorkspaceTools(mcp, env_file).registrations())
+            tool_registry.update(workspace.registrations())
+            tool_registry.update(review.registrations())
             session.tools = gateway.available_schemas()
+            previous = log.previous()
+            if previous:
+                session.application_result(ToolAction("task_status", {}, "previous_" + uuid.uuid4().hex), {
+                    "origin": "application_task_history", "previous_tasks": previous,
+                    "scope": "同会话的历史未完成记录，仅供核对；不授权重做操作，也不要求本轮发布运行测试。"})
             await apply_permission_intent(question, client, settings.default_model, web,
-                authorization, on_permission, env_file, tool_registry, act_web, session)
+                authorization, confirm if on_permission else None, env_file, tool_registry, act_web, session)
             session.tools = gateway.available_schemas()
             # Use the shared ReAct limit, independently of individual tool budgets.
-            answer = await run_loop(session.think, act)
+            answer = await run_loop(session.think, act, execute_batch=execute_batch,
+                                    before_finish=before_finish, on_exhausted=exhausted)
+            summary = review.summary()
+            if summary and summary not in answer:
+                answer += "\n\n" + summary
+            session.finish_text(answer)
+            try:
+                await finish_storage(workspace, gateway, log)
+            except Exception:
+                # Retention failure preserves data and cannot turn a completed
+                # coding task into a retry of its external side effects.
+                await blocking(lambda cancel: log.append({"event": "storage_maintenance_incomplete",
+                    "message": "到期维护未完成，副本继续保留。"}))
+            await blocking(lambda cancel: log.finish("budget_exhausted" if budget_exhausted else
+                "reviewed" if review.assessment and review.assessment["decision"] == "keep" else
+                "completed" if review.net_unchanged else
+                "unverified" if review.receipts or review.command_changes else "completed"))
+        except BaseException as error:
+            if log is not None:
+                log.finish("cancelled" if isinstance(error, asyncio.CancelledError) else "failed")
+            raise
         finally:
+            if workspace is not None:
+                await blocking(lambda cancel: workspace.storage.manager.close())
             authorization.close()
         checked_answer = evidence.annotate_answer(answer)
         if checked_answer != answer:

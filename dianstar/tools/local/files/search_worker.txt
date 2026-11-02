@@ -1,0 +1,31 @@
+"""Trusted stdin-only regex worker; no project imports or shell commands."""
+import json
+import re
+import sys
+
+
+def main():
+    request = json.load(sys.stdin)
+    try:
+        expression = re.compile(re.escape(request["pattern"]) if request["literal"] else request["pattern"],
+                                0 if request["case_sensitive"] else re.IGNORECASE)
+    except re.error:
+        print(json.dumps({"error": "file_invalid_regex", "message": "正则表达式无效，请修正后重试。"}))
+        return
+    found, skipped = [], 0
+    for item in request["files"]:
+        for number, line in enumerate(item["text"].splitlines(), 1):
+            if not expression.search(line):
+                continue
+            if skipped < request["offset"]:
+                skipped += 1
+                continue
+            found.append({"path": item["path"], "line": number, "text": line[:1000]})
+            if len(found) > request["limit"]:
+                print(json.dumps({"matches": found[:request["limit"]], "truncated": True}, ensure_ascii=False))
+                return
+    print(json.dumps({"matches": found, "truncated": False}, ensure_ascii=False))
+
+
+if __name__ == "__main__":
+    main()

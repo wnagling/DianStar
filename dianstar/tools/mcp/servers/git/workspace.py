@@ -11,6 +11,8 @@ from .operations import GitWorkspace as BasicWorkspace, GitError, branch_name, d
 from dianstar.tools.mcp.git_contract import BOOTSTRAP_TOOLS
 from .workflows import WorkflowMixin
 from .publish import PublishMixin
+from dianstar.security.file_locks import FileLocks
+from dianstar.security.system_paths import check_host_path
 
 
 CONFIG_KEYS = {"user.name", "user.email", "core.autocrlf", "core.eol", "core.safecrlf", "pull.ff", "pull.rebase"}
@@ -63,6 +65,7 @@ class GitWorkspace(PublishMixin, WorkflowMixin, BasicWorkspace):
 
     def check_repository(self, repository):
         root = Path(repository)
+        check_host_path(root, project=True)
         if not root.is_absolute() or root not in self.repositories or root.resolve(strict=True) != root.absolute():
             raise ValueError("Repository is outside the allowed scope")
         if (root / ".git").is_file():
@@ -90,6 +93,7 @@ class GitWorkspace(PublishMixin, WorkflowMixin, BasicWorkspace):
 
     def _allow_destination(self, value, *, clone=False):
         path = Path(value)
+        check_host_path(path, project=True)
         scoped = any(path != root and path.is_relative_to(root) for root in self.workspace_roots)
         if not self.workspace_roots and (self.confirm_destinations or (clone and self.allow_clone)):
             scoped = path != path.parent
@@ -207,12 +211,8 @@ class GitWorkspace(PublishMixin, WorkflowMixin, BasicWorkspace):
                        json.dumps({"操作": name, "仓库": repository, "完整参数": arguments, "当前状态及影响": details}, ensure_ascii=False, indent=2))
         if len(description) > 24000:
             raise GitError("git_preview_too_large", "完整预览超出限制，请缩小操作。")
-        self.plans = {key: value for key, value in self.plans.items() if value["expires"] > time.monotonic()}
-        if len(self.plans) >= 30:
-            raise GitError("git_plan_limit", "本轮预览数量已达上限。")
-        token = secrets.token_urlsafe(32)
-        self.plans[token] = dict(name=name, repository=repository, arguments=arguments, snapshot=snapshot,
-                                 details=details, expires=time.monotonic() + 600, extended=True)
+        token = self.store_plan(dict(name=name, repository=repository, arguments=arguments, snapshot=snapshot,
+                                     details=details, extended=True))
         preview = {"prepared": True, "token": token, "description": description}
         if name == "git_publish":
             preview["remote_target"] = {"url": self.security.hooks.scanner.redact(details["url"]),
@@ -300,26 +300,32 @@ class GitWorkspace(PublishMixin, WorkflowMixin, BasicWorkspace):
             raise GitError("git_dirty_worktree", "此操作要求干净工作区；请先保存或暂存当前修改，不会自动丢弃。")
 
     def apply(self, token):
-        plan = self.plans.get(token)
+        with self.plan_lock:
+            plan = self.plans.get(token)
+            if plan and plan.get("extended"):
+                self.plans.pop(token)
         if not plan or not plan.get("extended"):
             self.flags.progress = bool(plan and plan["name"] in PROGRESS)
             try:
                 return super().apply(token)
             finally:
                 self.flags.progress = False
-        self.plans.pop(token)
         self.flags.progress = plan["name"] in PROGRESS
         try:
             if plan["expires"] <= time.monotonic():
                 raise GitError("git_plan_expired", "预览已过期。")
             if plan["name"] in BOOTSTRAP_TOOLS:
-                with self.lifecycle_lock:
+                coordinated = FileLocks()
+                with coordinated.repository(plan["repository"]):
+                    coordinated.ensure_ready(plan["repository"])
                     target = self._allow_destination(plan["repository"], clone=plan["name"] == "git_clone")
                     if self._destination_state(target) != plan["snapshot"]:
                         raise GitError("git_state_changed", "目标目录在确认期间已变化。")
                     return self._apply_bootstrap(plan, target)
             context = self._context(plan["repository"])
-            with self.locks[str(context[0])]:
+            coordinated = FileLocks()
+            with coordinated.repository(context[0]), self.locks[str(context[0])]:
+                coordinated.ensure_ready(context[0])
                 if self._state(context)[0] != plan["snapshot"]:
                     raise GitError("git_state_changed", "仓库在确认期间已变化，请重新核对。")
                 return self._apply_extra(context, plan)
@@ -342,8 +348,9 @@ class GitWorkspace(PublishMixin, WorkflowMixin, BasicWorkspace):
                 *(["--branch", args["branch"]] if args.get("branch") else []), "--", plan["details"]["url"], str(target)], network=True, timeout=180)
         else:
             self._query(context, ["init", "--initial-branch=" + args.get("branch", "main"), "--", str(target)])
-        self.repositories = (*self.repositories, target)
-        self.locks[str(target)] = threading.RLock()
+        with self.lifecycle_lock:
+            self.repositories = (*self.repositories, target)
+            self.locks[str(target)] = threading.RLock()
         context = self._context(str(target))
         result = {"success": True, "operation": plan["name"], "repository": str(target), "created_repository": str(target),
                 "head": self._head(context), "content": self.read("git_status", str(target)).get("content", "")}

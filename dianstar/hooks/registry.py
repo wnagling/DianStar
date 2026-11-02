@@ -6,7 +6,7 @@ from typing import Callable
 
 from dianstar.security.content_guard import ContentScanner, Finding
 
-EVENTS = frozenset({"before_write", "before_stage", "before_commit", "before_push", "after_command", "after_clone"})
+EVENTS = frozenset({"before_read", "before_write", "before_command", "before_stage", "before_commit", "before_push", "before_github_write", "after_command", "after_clone", "before_trash", "before_storage_restore", "before_storage_purge", "before_scratch"})
 
 
 @dataclass(frozen=True)
@@ -56,4 +56,7 @@ def application_registry(additional_hooks=()):
     # Lazy imports keep event definitions independent from adapters and runner.
     from .workspace import registrations as workspace_hooks
     from .git import registrations as git_hooks
-    return HookRegistry((*workspace_hooks(), *git_hooks(), *additional_hooks))
+    from .github import registrations as github_hooks
+    from .commands import registrations as command_hooks
+    from .storage import registrations as storage_hooks
+    return HookRegistry((*workspace_hooks(), *git_hooks(), *github_hooks(), *command_hooks(), *storage_hooks(), *additional_hooks))

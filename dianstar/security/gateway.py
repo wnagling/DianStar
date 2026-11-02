@@ -38,19 +38,32 @@ class ToolGateway:
 
     def policy_for(self, name, registration):
         # Exact-tool rules are more specific than capability rules.
-        policy = self.policies.get(name, self.policies.get(registration.capability, ToolPolicy()))
+        policy = self.policies.get(name, self.policies.get(registration.capability))
+        for alias in registration.policy_aliases:
+            previous = self.policies.get(alias)
+            if previous is not None:
+                policy = previous if policy is None else ToolPolicy(enabled=policy.enabled and previous.enabled,
+                    requires_approval=policy.requires_approval or previous.requires_approval)
+        policy = policy or ToolPolicy()
         for dependency in registration.required_tools:
             entry = self.registry.get(dependency)
             if (entry is None or entry.required_tools
                     or not self.policies.get(dependency, self.policies.get(entry.capability, ToolPolicy())).enabled):
                 return ToolPolicy(enabled=False, requires_approval=policy.requires_approval)
+            restriction = self.policies.get(dependency, self.policies.get(entry.capability))
+            if restriction is not None and restriction.requires_approval:
+                policy = ToolPolicy(enabled=policy.enabled, requires_approval=True)
         return policy
 
     def available_schemas(self):
         return [entry.schema for name, entry in self.registry.items() if self.policy_for(name, entry).enabled]
 
     def uses_default_approval(self, name, registration):
-        return name not in self.policies and registration.capability not in self.policies
+        return (name not in self.policies and registration.capability not in self.policies
+                and not any(alias in self.policies for alias in registration.policy_aliases)
+                and not any((restriction := self.policies.get(dependency,
+                    self.policies.get(self.registry[dependency].capability))) is not None and restriction.requires_approval
+                    for dependency in registration.required_tools if dependency in self.registry))
 
     def policy_information(self):
         return {name: {"enabled": self.policy_for(name, entry).enabled,

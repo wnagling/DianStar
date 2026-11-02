@@ -3,6 +3,8 @@ from pathlib import PurePosixPath
 import json
 import shlex
 from urllib.parse import urlsplit
+from rich.cells import cell_len
+from .command_summary import command_purpose
 
 
 GIT_ACTIONS = {
@@ -33,6 +35,16 @@ GITHUB_ACTIONS = {
 
 def plain(value):
     return "".join(c if ord(c) >= 32 else " " for c in str(value))
+
+
+def compact(value, width):
+    text = plain(value)
+    if cell_len(text) <= width:
+        return text
+    text = text[:width]
+    while cell_len(text) > width - 1:
+        text = text[:-1]
+    return text + "…"
 
 
 SETTING_LABELS = {"git_enabled": "本地项目连接", "git_repositories": "可访问的本地项目",
@@ -103,23 +115,41 @@ def approval_details(description):
 def approval_summary(name, args, description):
     operation = name.removeprefix("mcp_git__").removeprefix("mcp_github__")
     repository = plain(args.get("repository", ""))
+    if name in {"workspace_environment_set", "workspace_environment_clear"}:
+        clearing = name == "workspace_environment_clear"
+        lines = ["是否清除这个项目的会话开发环境？" if clearing else "是否为这个项目记住开发环境？",
+                 "项目位置：" + repository, "仅当前会话使用；继续此会话时仍有效，其他会话不受影响。"]
+        if not clearing:
+            lines += [f"{plain(key)}={plain(value)}" for key, value in args["environment"].items()]
+            lines += ["优先搜索目录：" + plain(value) for value in args["path_prepend"]]
+            lines.append("整体替换此前保存的环境配置。")
+        lines.append("不修改系统环境，不安装程序；后续命令仍按操作范围授权。")
+        return "\n\n".join(lines)
     if operation == "git_publish":
         target = next((plain(line) for line in description.splitlines() if line.startswith("目标：")), "")
         files = args["files"]
-        selection = "、".join(map(plain, files[:3])) + (f"，另有 {len(files) - 3} 个文件" if len(files) > 3 else "")
-        return "\n\n".join(["是否提交并推送这批项目改动？", "项目位置：" + repository, target,
-                            "提交说明：" + plain(args["message"]), f"文件范围：{len(files)} 个文件（{selection}）",
-                            "确认一次，完成暂存、提交、普通推送和结果核验。完整文件范围、统计及一并推送的已有提交可查看详情。"])
+        selection = "、".join(map(plain, files[:2]))
+        remote = target.removeprefix("目标：").rsplit(" → ", 1)[0] or plain(args.get("remote", "origin"))
+        subject = next((line.strip() for line in args["message"].splitlines() if line.strip()), "")
+        return "\n".join(["是否提交并推送这批项目改动？", "项目位置：" + repository,
+                          "目标分支：" + plain(args["branch"]), "远程：" + remote,
+                          f"文件范围：{len(files)} 个文件" + (f"（另有 {len(files) - 2} 个见详情）" if len(files) > 2 else ""),
+                          "包含：" + compact(selection, 58), "提交说明：" + compact(subject, 52),
+                          "确认一次完成暂存、提交和普通推送，并核对结果。",
+                          "完整文件清单、提交说明和已有提交见详情。"])
     if name == "open_project":
         path = plain(args["path"])
         project = PurePosixPath(path.replace("\\", "/")).name
         related = []
         try:
-            related = json.loads(description).get("关联主项目", [])
+            payload = json.loads(description)
+            related = payload.get("关联主项目", [])
+            temporary = payload.get("记住项目") is False
         except (ValueError, AttributeError):
-            pass
+            temporary = False
         association = "\n关联主项目：" + "、".join(map(plain, related)) if related else ""
-        return f"是否打开 {project} 项目？\n\n项目位置：{path}{association}\n\n记住这个项目，方便后续使用。\n本次不会提交或推送代码，后续修改仍需按策略确认。"
+        usage = "仅在本轮使用，不保存项目路径。" if temporary else "记住这个项目，方便后续使用。"
+        return f"是否打开 {project} 项目？\n\n项目位置：{path}{association}\n\n{usage}\n本次不会提交或推送代码，后续修改仍需按策略确认。"
     if operation == "git_clone":
         url = plain(args["url"])
         project = PurePosixPath((urlsplit(url).path or url).replace("\\", "/")).name.removesuffix(".git")
@@ -149,14 +179,46 @@ def approval_summary(name, args, description):
         if operation in {"git_restore", "git_stash_apply", "git_revert"}:
             lines.append("这会改变当前文件内容，请确认恢复目标。")
         return "\n\n".join(lines)
-    if name in {"workspace_edit", "workspace_delete", "workspace_run"}:
-        if name == "workspace_run":
-            return "\n\n".join(("是否在这个项目中运行命令？", "项目位置：" + repository,
-                "运行内容：" + plain(shlex.join(args["argv"])), "命令以你的本机账户运行，可能修改文件或访问网络。"))
+    if name == "move":
+        return (f"是否移动或重命名这个文件？\n\n项目位置：{repository}\n\n"
+                f"从：{plain(args['source'])}\n\n到：{plain(args['destination'])}\n\n目标已存在时停止；可通过恢复记录撤销。")
+    if name in {"file_batch", "file_restore", "patch"}:
+        try:
+            preview = json.loads(description)
+            files = preview["文件"]
+            action = preview["操作"]
+        except (ValueError, KeyError, TypeError):
+            return "是否执行这批文件操作？请先查看完整详情。"
+        local_note = "\n\n其中包含仅在本机保存的运行配置；内容已遮挡，不授予提交或推送权限。" if preview.get("仅本地保存") else ""
+        return f"是否{plain(action)}？\n\n项目位置：{repository}\n\n文件：" + "、".join(plain(path) for path in files) + local_note + (
+            "\n\n保留所有当前文件，原始恢复副本继续保留。" if args.get("keep_current") else
+            "\n\n可查看完整差异；发生冲突时停止恢复，保留其他人的修改。")
+    if name in {"edit", "write", "workspace_edit", "workspace_delete", "workspace_run", "bash", "shell"}:
+        if name not in {"workspace_run", "bash", "shell"} and not isinstance(args.get("path"), str):
+            return "是否执行这项操作？\n\n" + plain(description)
+        if name in {"workspace_run", "bash", "shell"}:
+            environment_note = ""
+            try:
+                saved = json.loads(description).get("会话项目环境", {})
+                if saved.get("已启用"):
+                    environment_note += "\n\n使用当前会话为此项目保存的开发环境（版本 " + plain(saved["版本"]) + "）。"
+            except (ValueError, KeyError, TypeError, AttributeError):
+                pass
+            if args.get("environment"):
+                environment_note += "\n\n本次构建环境（仅这条命令）：" + "、".join(map(plain, args["environment"])) + "；具体值见详情。"
+            if args.get("network"):
+                environment_note += "\n\n本次允许这条命令访问互联网；可能下载或发送数据，文件修改范围仍受隔离限制。"
+            purpose, impact = command_purpose(name, args)
+            return "\n\n".join(("是否" + purpose + "？", "项目位置：" + repository, impact)) + environment_note
         verb = "删除" if name == "workspace_delete" else "创建" if args.get("mode") == "create" else "修改"
+        if name == "write":
+            try:
+                verb = "创建" if json.loads(description).get("操作") == "创建项目文件" else "完整写入"
+            except (ValueError, AttributeError):
+                verb = "写入"
         local_note = "\n\n仅在本机保存运行配置，可能包含凭据；内容已遮挡，不能因此提交或推送。" if args.get("local_only") else ""
         return f"是否{verb}这个项目文件？\n\n项目位置：{repository}\n\n文件：{plain(args['path'])}" + local_note + (
-            "\n\n删除后，未保存到版本记录的内容可能无法恢复。" if name == "workspace_delete" else "\n\n可展开下方详情查看具体修改。")
+            "\n\n删除前会保存本机恢复记录；恢复时发现其他改动会停止并提示。" if name == "workspace_delete" else "\n\n可展开下方详情查看具体修改。")
     if operation in GITHUB_ACTIONS:
         label = GITHUB_ACTIONS[operation]
         if operation == "issue_write":

@@ -67,7 +67,9 @@ class MCPTools:
                                 return Observation(action, await self.apply_git(original, action.arguments))
                             dependencies = tuple("mcp_git__" + operation for operation in ("git_stage", "git_commit", "git_push")) if tool.name == "git_publish" else ()
                             self.registry[name] = ToolRegistration(schema, f"mcp.git.{tool.name}", apply, prepare,
-                                                                   required_tools=dependencies)
+                                required_tools=dependencies, effects=("project.git",) if tool.name in {
+                                    "git_switch_branch", "git_checkout_remote", "git_pull", "git_restore", "git_revert", "git_merge",
+                                    "git_rebase", "git_cherry_pick", "git_conflict_continue", "git_conflict_abort", "git_stash_save", "git_stash_apply"} else ())
                         elif server == "github" and tool.name in GITHUB_WRITE_TOOLS:
                             async def prepare(arguments, original=tool.name):
                                 return await self.github_writes.prepare(original, arguments)
@@ -75,7 +77,7 @@ class MCPTools:
                                 return Observation(action, await self.github_writes.apply(original, action.arguments))
                             self.registry[name] = ToolRegistration(schema, f"mcp.github.{tool.name}", apply, prepare)
                         else:
-                            self.registry[name] = ToolRegistration(schema, f"mcp.{server}.read", handler)
+                            self.registry[name] = ToolRegistration(schema, f"mcp.{server}.read", handler, parallel_safe=True)
                         count += 1
                     self.authorization.grant(f"mcp.{server}.read", uses=30)
                     self.status[server] = {"state": "connected", "tools": count}

@@ -10,6 +10,8 @@ from dianstar.security.authorization import request_key
 from dianstar.security.gateway import ToolPreparationError
 from dianstar.tools.mcp.connection import MCPUnavailable
 from dianstar.tools.mcp.results import normalize_result
+from dianstar.hooks.github import GitHubWriteHooks
+from dianstar.security.content_guard import SecurityViolation
 
 
 class GitHubWrites:
@@ -19,6 +21,7 @@ class GitHubWrites:
         self.prepared = {}
         self.uncertain = set()
         self.attempts = 0
+        self.hooks = GitHubWriteHooks(adapter.env_file, adapter.token)
 
     @staticmethod
     def target_state(value):
@@ -126,12 +129,17 @@ class GitHubWrites:
             error = await self.adapter.validate_write(name, arguments, self.public_check)
             if error:
                 raise ToolPreparationError(error["error"], "GitHub 仓库、方法、凭据或写操作范围检查未通过。")
+            content_check = self.hooks.check(name, arguments)
             before = await self.snapshot(name, arguments)
-            description = json.dumps({"操作": name, "将提交的完整参数": arguments, "当前状态": before}, ensure_ascii=False, indent=2)
+            description = json.dumps({"操作": name, "将提交的完整参数": arguments, "当前状态": before,
+                                      "内容检查": content_check}, ensure_ascii=False, indent=2)
             if len(description) > 24000:
                 raise ToolPreparationError("github_preview_too_large", "完整预览超过 24000 字符，请缩小操作范围。")
             self.prepared[key] = (time.monotonic(), json.dumps(before, sort_keys=True, ensure_ascii=False))
             return description
+        except SecurityViolation as error:
+            result = error.result()
+            raise ToolPreparationError(result["error"], result["message"], findings=result["findings"]) from None
         except (OSError, ValueError, TypeError, KeyError, httpx.HTTPError):
             raise ToolPreparationError("github_preparation_failed", "无法核验 GitHub 当前状态，未申请执行。") from None
 
@@ -144,9 +152,12 @@ class GitHubWrites:
             error = await self.adapter.validate_write(name, arguments, self.public_check)
             if error:
                 return error
+            content_check = self.hooks.check(name, arguments)
             current = await self.snapshot(name, arguments)
             if json.dumps(current, sort_keys=True, ensure_ascii=False) != prepared[1]:
                 return {"error": "github_state_changed", "message": "等待确认期间目标状态已变化，请重新核对并申请。"}
+        except SecurityViolation as error:
+            return error.result()
         except (OSError, ValueError, TypeError, KeyError, httpx.HTTPError):
             return {"error": "github_preparation_failed"}
         try:
@@ -155,7 +166,7 @@ class GitHubWrites:
             if normalized.get("error"):
                 self.uncertain.add(key)
                 return {"error": "github_outcome_unknown", "message": "未得到可核验的写操作结果，请先查询目标状态，不要自动重试。"}
-            return normalized
+            return {**normalized, "content_check": content_check}
         except (MCPUnavailable, OSError, ValueError, TypeError, TimeoutError, httpx.HTTPError):
             self.uncertain.add(key)
             return {"error": "github_outcome_unknown", "message": "GitHub 写请求结果不明，请先查询实际状态，不要自动重试。"}

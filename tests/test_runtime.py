@@ -38,9 +38,10 @@ class RuntimeLoopLimitTests(unittest.IsolatedAsyncioTestCase):
                                         for message in results))
                     self.assertEqual(history[-1]["content"], answer)
                 else:
-                    with self.assertRaisesRegex(ValueError, "loop limit"):
-                        await run_turn("重复计算并复核", env_file=env_file, history=history)
-                    self.assertEqual(history, [])
+                    answer = await run_turn("重复计算并复核", env_file=env_file, history=history)
+                    self.assertIn("16 次模型决策上限", answer)
+                    self.assertEqual(len([item for item in history if item["role"] == "tool"]), 16)
+                    self.assertEqual(history[-1]["content"], answer)
 
                 self.assertEqual(create.await_count, 16)
                 final_results = [message for message in create.await_args_list[-1].kwargs["messages"]

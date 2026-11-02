@@ -16,7 +16,7 @@ from dianstar.security.command_policy import command_plan, routine_validation
 from dianstar.security.gateway import ToolGateway
 from dianstar.security.tool_policy import ToolPolicy
 from dianstar.tools.local.workspace import WorkspaceTools
-from tests.test_permissions import call, reply
+from tests.test_permissions import call, reply, with_review, workflow_results
 from tests.test_mcp_startup import git
 
 
@@ -124,7 +124,7 @@ class AutomaticValidationTests(unittest.IsolatedAsyncioTestCase):
         action = ToolAction("workspace_run", {"repository": str(self.root), "argv": ["python", "-m", "pytest", "-q"]})
         approval = AsyncMock(return_value=False)
         with patch("dianstar.security.command_policy.shutil.which", return_value=sys.executable), \
-                patch.object(self.tools, "run", new_callable=AsyncMock, return_value={"success": True}) as run:
+                patch("dianstar.tools.local.commands.CommandTools.run", new_callable=AsyncMock, return_value={"success": True}) as run:
             result = await ToolGateway(self.authorization, self.registry, approval).execute(action)
         self.assertTrue(result.result["success"])
         self.assertEqual(run.await_args.args[0]["argv"], [str(Path(sys.executable).resolve()), "-m", "pytest", "-q"])
@@ -177,7 +177,7 @@ class AutomaticValidationTests(unittest.IsolatedAsyncioTestCase):
         git(self.root, "config", "filter.fixture.clean", "fixture-must-not-run")
         approval = AsyncMock(return_value=True)
         action = ToolAction("workspace_run", {"repository": str(self.root), "argv": ["git", "diff", "--check"]})
-        with patch.object(self.tools, "run", new_callable=AsyncMock) as run:
+        with patch("dianstar.tools.local.commands.CommandTools.run", new_callable=AsyncMock) as run:
             result = await ToolGateway(self.authorization, self.registry, approval).execute(action)
         self.assertEqual(result.result["error"], "workspace_preparation_failed")
         run.assert_not_awaited()
@@ -224,7 +224,7 @@ class AutomaticValidationTests(unittest.IsolatedAsyncioTestCase):
         async def change_executable(request):
             helper.write_bytes(b"fixture executable replaced while confirmation was open")
             return True
-        with patch.object(self.tools, "run", new_callable=AsyncMock) as run:
+        with patch("dianstar.tools.local.commands.CommandTools.run", new_callable=AsyncMock) as run:
             result = await ToolGateway(self.authorization, self.registry, change_executable).execute(action)
         self.assertEqual(result.result["error"], "workspace_command_changed")
         run.assert_not_awaited()
@@ -240,10 +240,10 @@ class AutomaticValidationTests(unittest.IsolatedAsyncioTestCase):
         env.write_text("DEEPSEEK_API_KEY=fixture-model-key\n")
         history = []
         with patch("dianstar.providers.deepseek.AsyncOpenAI") as factory:
-            factory.return_value.chat.completions.create = AsyncMock(side_effect=[
-                call("workspace_run", self.action.arguments), call("mcp_status", {}), reply("项目测试通过。")])
+            factory.return_value.chat.completions.create = AsyncMock(side_effect=with_review([
+                call("workspace_run", self.action.arguments), call("mcp_status", {}), reply("项目测试通过。")]))
             await run_turn("运行当前项目测试", env_file=env, project_directory=self.root, history=history)
         result = next(json.loads(m["content"]) for m in history if m["role"] == "tool")
         self.assertTrue(result["success"], result)
-        status = [json.loads(m["content"]) for m in history if m["role"] == "tool"][-1]
+        status = next(result for result in workflow_results(history) if "tool_policies" in result)
         self.assertTrue(status["tool_policies"]["workspace_run"]["conditional_approval"])

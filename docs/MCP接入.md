@@ -16,7 +16,7 @@ GitHub 身份认证是独立前提：通过 `/github` 或设置中的“GitHub �
 
 .local/mcp.json 继续兼容已有仓库、目标目录、组件覆盖和模式策略，普通用户不需要编辑。自动识别当前项目与 GitHub origin，不把整个父目录或全账号仓库纳入范围。enabled 与 requires_approval 两项后台工具策略继续有效，默认修改动作逐次确认；未来只读/全权限模式接口保持不变。
 
-已明确限制的仓库范围、私有内容范围和账号权限检查继续有效。普通任务只提供具体的 open_project 项目打开能力，不提供 get_mcp_configuration/configure_mcp；内部配置工具仅可由可信后端显式注册。打开新项目时确认项目名、完整路径和关联主项目，只记住该项目，不改后台功能策略，也不提交/推送。当前项目无需重复打开。连接随提问自动建立与释放，mcp_status 供 Agent 内部诊断实际生效范围，不用静态配置列表误判当前项目不可用。
+已明确限制的仓库范围、私有内容范围和账号权限检查继续有效。普通任务只提供具体的 open_project 项目打开能力，不提供 get_mcp_configuration/configure_mcp；内部配置工具仅可由可信后端显式注册。本轮直接要求操作某个绝对路径项目时，open_project 可在默认策略下临时切换，不增加确认、不写长期配置；带空格路径使用引号。其他项目、长期记住或后台强制审批时仍确认项目名、完整路径和关联主项目，再记住路径并重连工具。两种流程都保留原后台策略，不把打开项目当作提交、推送或其他写操作授权。当前项目无需重复打开。连接随提问自动建立与释放，mcp_status 供 Agent 内部诊断实际生效范围，不用静态配置列表误判当前项目不可用。
 
 固定 Windows 组件路径为 .local/tools/github-mcp-server/v2.0.3/github-mcp-server.exe，SHA256 为 647fe7e7f3c1296d1acb936b5c7704bbcdb6bda95b4533c524157446b33f0f16。源码安装的组件依赖由安装维护流程准备，打包脚本会核验并随包复制，不携带制作者账号或配置。
 
@@ -80,6 +80,8 @@ Git 操作先由服务端检查并生成预览，应用才显示确认。暂存�
 
 ## 本地执行边界
 
+官方 GitHub 写工具现通过 `hooks/github.py` 接入统一 `before_github_write` 内容检查。PR、Issue、评论及审查的完整参数和原始多行文本在预览前、批准后发送前各检查一次，复用共享敏感内容规则及当前登录凭据指纹；拒绝或检查异常时不调用写工具。扫描结果以 `content_check` 返回，不修改官方参数或取代仓库、私有访问、状态及审批检查。只读调用和本地 REST 管理工具不因此获得新的权限。真实模型、私有仓库、CI 及 Hook 验收范围见 [完整链路记录](./测试记录-2026-10-31-GitHub完整链路.md)。
+
 内置 Git Server 只构造明确类型的固定操作，不接受任意命令、任意 Git 选项或用户指定程序；引用由程序解析并固定为提交。删除未合并本地分支的 force 和推送的 force_with_lease 是独立、需完整预览确认的正式字段，不支持无条件强推。文件参数逐项检查，并使用字面路径匹配；不自动暂存全部文件。指定 Git 目录和工作区，关闭外部 diff、textconv、fsmonitor、hooks、签名、自动维护、子模块递归、分页器和交互提示；有冲突或正在 merge/rebase 等整合时，只允许冲突处理所需的暂存、继续和中止，其他写操作拒绝。Git hooks 不运行，因此提交成功不代表通过 lint、测试、签名或项目校验。
 
 检查本地 Git 配置键名，不跟随 include；含 filter、include/includeIf、URL 重写、split index、partial clone 或外部 merge/diff 驱动时拒绝。Git 元数据目录中的符号链接/junction、外部对象目录和非受管共享元数据也不支持；已配置主仓库下、经过反向关联核验的 worktree 可用。系统/全局配置不整体载入操作，仅显式读取已知换行设置；提交身份优先本地，缺失时只读取全局 user.name/user.email，提交工具不接受临时作者参数；身份修改通过独立仓库配置工具展示并确认，不能编造作者。普通子命令最多 8 秒，网络子命令通常最多 30 秒，clone 最多 180 秒，输出读取最多 2 MiB，给模型的内容仍限 24000 字符。
@@ -123,6 +125,6 @@ git_workspace_roots 可限制创建仓库/worktree 的父目录；默认策略�
 
 clone/init/worktree_add 成功后立即加入本轮允许仓库；应用保存到当前日常 mcp.json，下一轮继续可用。若保存失败，返回 configuration_saved=false，已完成的 Git 操作不会冒称回滚。目标、索引、配置、引用、工作文件或整合状态在确认期间变化，会拒绝执行。
 
-workspace_list/read/search 读取已接入仓库的本地文件；workspace_edit 使用 create/replace/overwrite，replace 必须唯一匹配；workspace_delete 只删除明确文件、不递归目录；workspace_run 用 argv 数组启动进程，无隐式 shell，超时 1–600 秒，返回退出码及截断标记，超时/取消处理子进程。需要 shell 时必须在 argv 中明确请求对应解释器。所有这些工具都不是操作系统沙箱，进程仍拥有当前用户的系统权限；依赖脚本也可能产生外部副作用。
+`read` 读取已接入项目的文本或列目录；`glob` 按路径模式找文件；`grep` 搜索内容；`edit` 精确替换，默认要求唯一匹配；`write` 新建或完整写入。已有文件须先在本轮成功读取，写入前检查快照与内容 Hook。`workspace_delete` 只删除明确文件、不递归目录；`workspace_run` 用 argv 数组启动进程，无隐式 shell，超时 1–600 秒，返回退出码及截断标记，超时/取消处理子进程。文件工具是本地工具，复用已接入项目范围，不经 MCP 传输。需要 shell 时必须在 argv 中明确请求对应解释器。所有这些工具都不是操作系统沙箱，进程仍拥有当前用户的系统权限；依赖脚本也可能产生外部副作用。参数与限制见 [文件工具说明](./工具说明.md#项目文件工具)。
 
 GitHub 管理工具放在 tools/local/github_admin.py，使用固定主机的官方 REST API，名称为 github_repository_settings_get/update、github_branch_protection_get/update、github_collaborators_list/set/remove；没有向官方 MCP Schema 增加私有字段。支持描述、主页、默认分支、可见性、功能和合并开关；分支保护按当前设置合并修改，保留未请求改变的审批与管理员规则；协作者使用官方 permission 字段，明确区分已加入和待接受邀请。写操作都经完整预览、确认、状态重查和回读，结果不明不自动重试。管理员 Token 不自动扩大允许仓库范围。

@@ -1,6 +1,7 @@
 """统一网页搜索与读取：有界免费搜索备用、本地正文与已授权 API。"""
 
 import asyncio
+from contextvars import ContextVar
 import json
 import os
 import ssl
@@ -60,7 +61,17 @@ class WebTools:
         self._free_paths = set()
         self._free_search_queries = set()
         self._pending_fallbacks = {}
-        self._provider = "free" if settings.provider == "auto" else settings.provider
+        self._providers = ContextVar("web_provider", default="free" if settings.provider == "auto" else settings.provider)
+        self._fallback_lock = asyncio.Lock()
+
+    @property
+    def _provider(self):
+        # A free request must not switch an in-flight paid request's provider.
+        return self._providers.get()
+
+    @_provider.setter
+    def _provider(self, value):
+        self._providers.set(value)
 
     @property
     def client(self) -> httpx.AsyncClient:
@@ -152,6 +163,19 @@ class WebTools:
                 "先改写查询或免费读取其他合理来源；已有证据足够就直接回答。确实仍缺必要证据时，保持原参数并携带此 api_fallback 标识申请继续。首次免费失败不会弹窗或调用付费 API。"}
 
     async def _continue_fallback(self, name: str, arguments: dict, token: str) -> dict:
+        # Re-check the shared turn grant inside this lock: concurrent requests
+        # may have been waiting for the same user's decision. Network I/O is
+        # outside the lock so independently authorized requests still overlap.
+        async with self._fallback_lock:
+            denied = await self._authorize_fallback(name, arguments, token)
+            if denied is not None:
+                return denied
+            pending = self._pending_fallbacks.pop(token)
+        self._provider = "deepseek"
+        paid_result = await self._attempt(name, arguments)
+        return {**paid_result, "free_error": pending[2]["error"]}
+
+    async def _authorize_fallback(self, name: str, arguments: dict, token: str) -> dict | None:
         pending = self._pending_fallbacks.get(token) if isinstance(token, str) else None
         if pending is None or self._request_key(name, arguments) != self._request_key(pending[0], pending[1]):
             return {"error": "invalid_api_fallback", "message": "备用标识无效或不对应此请求，请先免费访问目标；未调用 API。"}
@@ -199,10 +223,7 @@ class WebTools:
         denied = self.authorization.reserve("web.paid", name, arguments)
         if denied:
             return denied
-        self._provider = "deepseek"
-        self._pending_fallbacks.pop(token, None)
-        paid_result = await self._attempt(name, arguments)
-        return {**paid_result, "free_error": result["error"]}
+        return None
 
     def _search_key_id(self) -> str | None:
         try:

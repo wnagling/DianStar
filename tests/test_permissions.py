@@ -35,6 +35,29 @@ def call(name, arguments):
             function=SimpleNamespace(name=name, arguments=json.dumps(arguments)))]))])
 
 
+def with_review(responses):
+    """Legacy workflow fixtures explicitly acknowledge the new review gate."""
+    pending = iter(responses)
+    async def respond(**request):
+        try:
+            return next(pending)
+        except StopIteration:
+            last = json.loads(request["messages"][-1]["content"])
+            if last.get("origin") == "application_change_review":
+                return call("record_review", {"decision": "uncertain", "reason": "此夹具只验收操作流程，未验收业务正确性",
+                                               "evidence_call_ids": []})
+            if last.get("recorded") and last.get("decision") == "uncertain":
+                return reply("工具流程已执行，业务验证尚未完成。")
+            raise AssertionError("Unexpected model request after fixture responses")
+    return respond
+
+
+def workflow_results(history):
+    results = [json.loads(message["content"]) for message in history if message["role"] == "tool"]
+    return [result for result in results if result.get("origin") != "application_change_review"
+            and not (result.get("recorded") and result.get("decision") in {"keep", "repair", "restore", "uncertain"})]
+
+
 class AuthorizationTests(unittest.IsolatedAsyncioTestCase):
     async def test_unknown_tools_capabilities_and_empty_policy_fail_closed(self):
         auth = Authorization()

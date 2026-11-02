@@ -27,7 +27,7 @@ def template(path):
 def protected_path(path):
     parts = PurePosixPath(path.replace("\\", "/").lower()).parts
     for index, part in enumerate(parts):
-        if (part in {".git", ".local", ".aws", ".ssh"}
+        if (part in {".git", ".local", ".aws", ".ssh"} or part.startswith((".dianstar-tmp-", ".dianstar-trash-"))
                 or ((part.startswith(".env") or part.endswith(".env")) and part not in TEMPLATES)
                 or part.endswith((".pem", ".key"))):
             return True
@@ -168,26 +168,30 @@ class ContentScanner:
             findings.add((line, kind, confidence))
         return [Finding(self.redact(path), line, kind, confidence) for line, kind, confidence in sorted(findings)]
 
-    def redact(self, text):
+    def redact(self, text, *, env_style=False, preserve_lines=False):
+        def replacement(marker, value):
+            return marker + ("".join(re.findall(r"\r\n|[\n\r\v\f\x1c-\x1e\x85\u2028\u2029]", value)) if preserve_lines else "")
         # A private-key finding covers the whole key block in output/previews.
         parts, cursor = [], 0
         while match := self.private_header.search(text, cursor):
             marker = "-----END " + match.group(1) + "-----"
             close = text.find(marker, match.end())
             end = len(text) if close < 0 else close + len(marker)
-            parts.extend((text[cursor:match.start()], "[已遮挡私钥]"))
+            hidden = replacement("[已遮挡私钥]", text[match.start():end])
+            parts.extend((text[cursor:match.start()], hidden))
             cursor = end
         parts.append(text[cursor:])
         text = "".join(parts)
         ranges = []
-        for start, end, _, _ in sorted(self.matches(text)):
+        for start, end, _, _ in sorted(self.matches(text, env_style=env_style)):
             if ranges and start <= ranges[-1][1]:
                 ranges[-1] = (ranges[-1][0], max(end, ranges[-1][1]))
             else:
                 ranges.append((start, end))
         parts, cursor = [], 0
         for start, end in ranges:
-            parts.extend((text[cursor:start], "[已遮挡凭据]"))
+            hidden = replacement("[已遮挡凭据]", text[start:end])
+            parts.extend((text[cursor:start], hidden))
             cursor = end
         parts.append(text[cursor:])
         return "".join(parts)

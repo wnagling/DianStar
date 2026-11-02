@@ -327,3 +327,23 @@ class DeepSeekSession:
         if len(self.observed_call_ids) == len(self.pending_calls):
             self.pending_calls = []
             self.observed_call_ids = set()
+
+    def application_result(self, action: ToolAction, result: dict) -> None:
+        """Append paired, application-owned tool data without promoting its text."""
+        if self.pending_calls:
+            raise ValueError("Cannot insert an application event into an unfinished batch")
+        self.messages.extend([
+            {"role": "assistant", "content": "", "reasoning_content": "", "tool_calls": [{"id": action.call_id, "type": "function",
+                "function": {"name": action.name, "arguments": json.dumps(action.arguments, ensure_ascii=False)}}]},
+            {"role": "tool", "tool_call_id": action.call_id, "content": json.dumps(result, ensure_ascii=False)},
+        ])
+
+    def reject_final(self, text):
+        if self.messages and self.messages[-1].get("role") == "assistant" and not self.messages[-1].get("tool_calls") and self.messages[-1].get("content") == text:
+            self.messages.pop()
+
+    def finish_text(self, text):
+        if self.messages and self.messages[-1].get("role") == "assistant" and not self.messages[-1].get("tool_calls"):
+            self.messages[-1]["content"] = text
+        else:
+            self.messages.append({"role": "assistant", "content": text})

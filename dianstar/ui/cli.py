@@ -48,8 +48,14 @@ def _answer(question: str, conversation: Conversation | None = None) -> bool:
                 return False
             return choice.strip().lower() == "y"
 
+        count = 0
+        def progress(event):
+            nonlocal count
+            if event["phase"] == "completed":
+                count += 1
+                print(f"已完成 {count} 项操作" + ("，正在核对修改。" if event["tool"] in {"review_changes", "record_review"} else "。"), file=sys.stderr)
         answer = asyncio.run(ask_and_save(question, conversation, runner=run_turn, on_paid_web=approval,
-            on_permission=approve_permission if approval is not None else None))
+            on_permission=approve_permission if approval is not None else None, on_tool=progress))
     except ValueError as error:
         print(f"错误：{error}", file=sys.stderr)
         return False

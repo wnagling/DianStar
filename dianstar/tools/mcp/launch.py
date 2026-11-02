@@ -46,6 +46,7 @@ def server_parameters(settings: MCPSettings, env_file: Path, *, allow_clone=Fals
             args.append("--confirm-destinations")
         parameters["git"] = StdioServerParameters(command=sys.executable, args=args,
             cwd=str(PROJECT_ROOT), env={**common, **account_env, "PYTHONIOENCODING": "utf-8",
+                **({name: os.environ[name] for name in ("DIANSTAR_FILE_STATE_ROOT", "LOCALAPPDATA") if name in os.environ}),
                 FINGERPRINT_ENV: fingerprint_payload(known_credentials(env_file,
                     extra=(github_token(settings, env_file),))),
                 **({"SSH_AUTH_SOCK": os.environ["SSH_AUTH_SOCK"]} if "SSH_AUTH_SOCK" in os.environ else {})})

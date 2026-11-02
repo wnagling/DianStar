@@ -18,7 +18,7 @@ def update_web_tools(registry, handler, settings):
             registry.pop(name, None)
         else:
             registry[name] = ToolRegistration(schema,
-                "web.search" if name == "search_web" else "web.read", handler)
+                "web.search" if name == "search_web" else "web.read", handler, parallel_safe=True)
 
 
 def build_local_registry(web, evidence, env_file, search_settings):
@@ -68,9 +68,9 @@ def build_local_registry(web, evidence, env_file, search_settings):
 
     # 同一份注册表绑定模型可见的工具定义和实际执行函数。
     tool_registry = {
-        WEATHER_TOOL["function"]["name"]: ToolRegistration(WEATHER_TOOL, "weather.read", act_weather),
-        DATE_TOOL["function"]["name"]: ToolRegistration(DATE_TOOL, "calculate", act_date),
-        NUMBER_TOOL["function"]["name"]: ToolRegistration(NUMBER_TOOL, "calculate", act_number),
+        WEATHER_TOOL["function"]["name"]: ToolRegistration(WEATHER_TOOL, "weather.read", act_weather, parallel_safe=True),
+        DATE_TOOL["function"]["name"]: ToolRegistration(DATE_TOOL, "calculate", act_date, parallel_safe=True),
+        NUMBER_TOOL["function"]["name"]: ToolRegistration(NUMBER_TOOL, "calculate", act_number, parallel_safe=True),
         WEB_ACCESS_TOOL["function"]["name"]: ToolRegistration(WEB_ACCESS_STATUS_TOOL, "permissions.read", act_web_access),
     }
     update_web_tools(tool_registry, act_web, search_settings)

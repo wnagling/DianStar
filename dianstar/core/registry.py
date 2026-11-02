@@ -16,3 +16,10 @@ class ToolRegistration:
     # A trusted tool can classify its already-prepared operation as routine.
     # Explicit backend policies override this default, and preflight still runs.
     auto_approve: Callable[[dict], bool] | None = None
+    # Query timeout classification; resource claims control concurrency.
+    parallel_safe: bool = False
+    effects: tuple[str, ...] = ()
+    # Trusted claims are application code, never model-supplied lock metadata.
+    resources: Callable[[ToolAction], tuple] | None = None
+    # Renamed/replacement tools retain explicit backend restrictions.
+    policy_aliases: tuple[str, ...] = ()

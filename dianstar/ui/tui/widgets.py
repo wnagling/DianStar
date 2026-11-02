@@ -4,7 +4,7 @@ from rich.style import Style
 from textual.app import ComposeResult
 from textual.binding import Binding
 from textual.containers import Vertical
-from textual.events import Click, MouseDown, MouseUp
+from textual.events import Click, MouseDown, MouseUp, Resize
 from textual.geometry import Offset, Size
 from textual.message import Message
 from textual.screen import Screen
@@ -27,6 +27,16 @@ class ChatLog(RichLog):
         def __init__(self, url: str) -> None:
             super().__init__()
             self.url = url
+
+    class WidthChanged(Message):
+        pass
+
+    def on_resize(self, event: Resize) -> None:
+        previous = getattr(self, "_known_chat_width", None)
+        super().on_resize(event)
+        self._known_chat_width = event.size.width
+        if previous is not None and previous != event.size.width:
+            self.post_message(self.WidthChanged())
 
     def get_selection(self, selection: Selection) -> tuple[str, str] | None:
         # Extract from display rows directly: splitlines() drops the final blank

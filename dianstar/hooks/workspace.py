@@ -1,9 +1,9 @@
-"""Workspace write checks and bounded observation after command execution."""
+"""Workspace read/write checks and bounded observation after commands."""
 import hashlib
 import os
 from pathlib import Path
 
-from dianstar.security.content_guard import MAX_FILE, MAX_FILES, MAX_TOTAL, SecurityViolation, check_content, local_configuration
+from dianstar.security.content_guard import MAX_FILE, MAX_FILES, MAX_TOTAL, Finding, SecurityViolation, check_content, local_configuration, protected_path
 from .registry import HookRegistration
 
 
@@ -16,8 +16,14 @@ def after_command(context, path, data):
     return check_content(context.scanner, path, data)
 
 
+def before_read(context, path, data):
+    # Protected paths fail closed; ordinary text is redacted before output.
+    return [Finding(context.scanner.redact(path), 0, "受保护的本地配置或私钥路径")] if protected_path(path) else []
+
+
 def registrations():
     return (
+        HookRegistration("workspace.read", ("before_read",), before_read, priority=0),
         HookRegistration("workspace.content", ("before_write",), before_write, priority=0),
         HookRegistration("workspace.audit", ("after_command",), after_command, priority=0),
     )
@@ -70,6 +76,8 @@ class WorkspaceAudit:
         except SecurityViolation as error:
             report = {"event": "after_command", "complete": False, **error.result()}
         report["scope"] = "项目文件及应用配置；不包含依赖目录、Git 元数据和其他仓库外文件。"
+        report["changed_files"] = [self.hooks.scanner.redact(path) for path, _ in changed[:100]]
+        report["changes_truncated"] = len(changed) > 100
         if not report["complete"] or report.get("findings"):
             report["message"] = "命令已经运行，检查发现风险或未完整完成；未自动删除文件、回滚修改或撤销网络操作。"
         return report

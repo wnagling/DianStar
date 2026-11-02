@@ -36,7 +36,12 @@ class SecretWorkspaceTests(unittest.IsolatedAsyncioTestCase):
         self.approve = AsyncMock(return_value=True)
         self.gateway = ToolGateway(self.auth, self.tools.registrations(), self.approve)
 
-    async def call(self, name="workspace_edit", **args):
+    async def call(self, name="write", **args):
+        if name == "write":
+            mode = args.pop("mode", None)
+            args["content"] = args.pop("new_text")
+            if mode == "overwrite":
+                await self.gateway.execute(ToolAction("read", {"repository": str(self.root), "path": args["path"]}))
         return (await self.gateway.execute(ToolAction(name, {"repository": str(self.root), **args}))).result
 
     async def test_importing_token_as_ordinary_file_is_blocked_before_confirmation_or_write(self):
@@ -64,7 +69,7 @@ class SecretWorkspaceTests(unittest.IsolatedAsyncioTestCase):
 
     async def test_application_key_is_never_copied_even_with_local_only_or_no_prompt_policy(self):
         self.gateway = ToolGateway(self.auth, self.tools.registrations(), self.approve,
-            policies={"workspace_edit": ToolPolicy(requires_approval=False)})
+            policies={"write": ToolPolicy(requires_approval=False)})
         result = await self.call(path="config.json", mode="create", new_text="synthetic-application-secret", local_only=True)
         self.assertEqual(result["error"], "sensitive_content_denied")
         self.assertFalse((self.root / "config.json").exists())

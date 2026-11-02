@@ -98,6 +98,9 @@ class AutomaticConnectionTests(unittest.TestCase):
         child = self.repo / "src"
         child.mkdir()
         self.assertEqual(project_repositories(child), (str(self.repo),))
+        # A temporary directory may itself live beneath this checkout. Mark its
+        # boundary explicitly so ancestor discovery cannot reach the real repo.
+        (self.root / ".git").write_text("fixture-invalid-git-metadata\n")
         self.assertEqual(project_repositories(self.root), ())
 
     def test_worktree_discovery_requires_reciprocal_metadata(self):
@@ -152,8 +155,8 @@ class AutomaticRuntimeTests(unittest.IsolatedAsyncioTestCase):
             history = []
             await run_turn("检查当前项目", env_file=self.env, project_directory=self.repo, history=history)
             names = {t["function"]["name"] for t in create.await_args_list[0].kwargs["tools"]}
-        self.assertTrue({"mcp_git__git_status", "mcp_git__git_clone", "workspace_read"} <= names)
-        self.assertTrue({"mcp_git__git_commit", "mcp_git__git_push", "workspace_run", "workspace_edit"} <= names)
+        self.assertTrue({"mcp_git__git_status", "mcp_git__git_clone", "read"} <= names)
+        self.assertTrue({"mcp_git__git_commit", "mcp_git__git_push", "workspace_run", "edit"} <= names)
         results = [json.loads(m["content"]) for m in history if m["role"] == "tool"]
         self.assertEqual(results[0]["connection_modes"]["git"], "automatic")
         self.assertEqual(results[0]["servers"]["git"]["state"], "connected")
@@ -165,7 +168,7 @@ class AutomaticRuntimeTests(unittest.IsolatedAsyncioTestCase):
         with patch("dianstar.providers.deepseek.AsyncOpenAI") as factory:
             factory.return_value.chat.completions.create = AsyncMock(side_effect=[
                 call("mcp_git__git_clone", {"repository": str(target), "url": str(self.repo)}),
-                call("workspace_read", {"repository": str(target), "path": "README.md"}), reply("克隆完成。")])
+                call("read", {"repository": str(target), "path": "README.md"}), reply("克隆完成。")])
             approval = AsyncMock(return_value=True)
             history = []
             await run_turn("克隆到指定目录并读取 README", env_file=self.env, project_directory=self.repo,

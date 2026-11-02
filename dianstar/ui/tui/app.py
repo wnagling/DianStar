@@ -69,6 +69,12 @@ class DianStarApp(ChatView, App[None]):
         self.config_file = config_file
         self.env_file = env_file
         self.busy = False
+        self._tool_pending = set()
+        self._tool_finished = 0
+        self._tool_activities = {}
+        self._active_tools = self._tool_tail_start = self._tool_activity = self._tool_timer = None
+        self._expanded_tools, self._expanded_tool_items = set(), set()
+        self._tool_epoch = None
         self._welcome_only = False
         self._installed_model_shortcut: str | None = None
         self._copy_menu_text = ""
@@ -220,6 +226,10 @@ class DianStarApp(ChatView, App[None]):
         if self._welcome_only:
             self.call_after_refresh(self._refresh_welcome)
 
+    def on_chat_log_width_changed(self, event: ChatLog.WidthChanged) -> None:
+        if any(block["kind"] == "tools" for block in self._chat_blocks):
+            self.call_after_refresh(self._redraw_chat)
+
     def _refresh_welcome(self) -> None:
         # 延迟布局回调执行时，用户可能已经开始或完成了一轮对话。
         if self._welcome_only and not self.busy:
@@ -363,12 +373,22 @@ class DianStarApp(ChatView, App[None]):
 
     async def _ask(self, question: str) -> None:
         self._stream_thinking("")
+        self._reset_active_tools()
+        epoch, conversation = object(), self.conversation
+        self._tool_epoch = epoch
+        def tool_event(event):
+            if self._tool_epoch is epoch and self.conversation is conversation:
+                self._tool_progress(event)
+        self._tool_pending.clear()
+        self._tool_finished = 0
+        self._tool_activities.clear()
         try:
             answer = await ask_and_save(
                 question, self.conversation, runner=run_turn,
                 on_stream=self._stream_answer, on_thinking=self._receive_thinking,
                 env_file=self.env_file, on_paid_web=self._approve_paid_web,
                 on_permission=self._approve_permission,
+                on_tool=tool_event,
             )
             self._paint_thinking()
             self._finish_answer(answer)
@@ -376,6 +396,9 @@ class DianStarApp(ChatView, App[None]):
             self.query_one("#session-name", Label).update(self.conversation.name or "未命名会话")
             await self._refresh_sessions()
             self._status("")
+        except asyncio.CancelledError:
+            self._status("本轮已取消；已经执行的操作请以工具记录为准。")
+            raise
         except (APITimeoutError, TimeoutError):
             self._status("DeepSeek 在 60 秒内未响应，请重试。")
         except APIConnectionError:
@@ -385,11 +408,36 @@ class DianStarApp(ChatView, App[None]):
         except (ValueError, OpenAIError, OSError) as error:
             self._status(f"请求失败：{error}")
         finally:
+            self._finish_tools()
+            self._tool_epoch = None
             self._paint_thinking()
             self._reset_active_thinking()
             self._stream_answer("")
             self.busy = False
             self.query_one("#input", ChatInput).focus()
+
+    def _tool_progress(self, event):
+        if event.get("conversation_id") is not None and event["conversation_id"] != self.conversation.id:
+            return
+        self._record_tool_event(event)
+        identifier = event["call_id"]
+        if not hasattr(self, "_tool_activities"):
+            self._tool_activities = {}
+        if event["phase"] == "started":
+            self._tool_pending.add(identifier)
+            if event.get("activity"):
+                self._tool_activities[identifier] = event["activity"]
+        else:
+            self._tool_pending.discard(identifier)
+            self._tool_activities.pop(identifier, None)
+            self._tool_finished += 1
+        if self._tool_activities:
+            label = next(iter(self._tool_activities.values()))
+            self._status(f"正在{label}… 已完成 {self._tool_finished} 项操作")
+        elif event["tool"] in {"review_changes", "record_review"}:
+            self._status(f"正在核对本次修改… 已完成 {self._tool_finished} 项操作")
+        else:
+            self._status(f"已完成 {self._tool_finished} 项操作，{len(self._tool_pending)} 项正在处理…")
 
     async def _approve_paid_web(self, request: dict) -> str:
         choice = await self.push_screen_wait(PaidWebApproval(request))

@@ -318,3 +318,27 @@ class PublishMCPTests(GitFixture, unittest.IsolatedAsyncioTestCase):
         self.assertEqual(results[-1]["commit"], self.git("rev-parse", "refs/heads/main", cwd=self.remote))
         approval.assert_awaited_once()
         self.assertIn("提交并推送", approval.await_args.args[0]["summary"])
+
+    async def test_explicit_project_from_another_directory_opens_temporarily_then_confirms_publish_once(self):
+        env = self.root / ".env"
+        env.write_text("DEEPSEEK_API_KEY=fixture-model-key\n")
+        approve, history = AsyncMock(return_value=True), []
+        with patch("dianstar.providers.deepseek.AsyncOpenAI") as factory:
+            factory.return_value.chat.completions.create = AsyncMock(side_effect=[
+                call("open_project", {"path": str(self.repo)}),
+                call("mcp_git__git_status", {"repository": str(self.repo)}),
+                call("mcp_git__git_publish", {"repository": str(self.repo), "files": ["one.txt"],
+                     "message": "publish selected files", "branch": "main", "remote": "origin"}),
+                reply("项目改动已提交并推送。"),
+            ])
+            await run_turn(f"把 {self.repo} 这次开发的项目改动提交并推送到当前分支对应的远程仓库，提交说明由你概括。",
+                           env_file=env, project_directory=self.root, on_permission=approve, history=history)
+        approve.assert_awaited_once()
+        self.assertIn("提交并推送", approve.await_args.args[0]["summary"])
+        self.assertFalse((self.root / ".local/mcp.json").exists())
+        results = [json.loads(message["content"]) for message in history if message["role"] == "tool"]
+        self.assertEqual(len(results), 3)
+        self.assertTrue(results[0]["success"])
+        self.assertFalse(results[0]["project_saved"])
+        self.assertTrue(results[-1]["remote_verified"])
+        self.assertEqual(results[-1]["commit"], self.git("rev-parse", "refs/heads/main", cwd=self.remote))

@@ -18,7 +18,7 @@ from dianstar.security.gateway import ToolGateway
 from dianstar.tools.local.github_admin import GitHubAdmin
 from dianstar.tools.mcp.client import MCPTools
 from tests.test_mcp_startup import git
-from tests.test_permissions import call, reply
+from tests.test_permissions import call, reply, with_review, workflow_results
 
 
 class DefaultLocalOperationsTests(unittest.IsolatedAsyncioTestCase):
@@ -26,15 +26,15 @@ class DefaultLocalOperationsTests(unittest.IsolatedAsyncioTestCase):
         (self.repo / "README.md").write_text("after\n")
         approve = AsyncMock(return_value=True)
         with patch("dianstar.providers.deepseek.AsyncOpenAI") as factory:
-            create = factory.return_value.chat.completions.create = AsyncMock(side_effect=[
+            create = factory.return_value.chat.completions.create = AsyncMock(side_effect=with_review([
                 call("open_project", {"path": str(self.repo)}),
                 call("mcp_git__git_status", {"repository": str(self.repo)}),
                 call("mcp_git__git_stage", {"repository": str(self.repo), "files": ["README.md"]}),
                 call("mcp_git__git_commit", {"repository": str(self.repo), "message": "fixture named project"}),
-                call("mcp_git__git_push", {"repository": str(self.repo), "branch": "main"}), reply("已完成。")])
+                call("mcp_git__git_push", {"repository": str(self.repo), "branch": "main"}), reply("已完成。")]))
             history = []
             await run_turn("提交指定项目", env_file=self.env, project_directory=self.root, on_permission=approve, history=history)
-        results = [json.loads(m["content"]) for m in history if m["role"] == "tool"]
+        results = workflow_results(history)
         self.assertTrue(all(not r.get("error") for r in results), results)
         first_request = approve.await_args_list[0].args[0]
         self.assertIn("是否打开 project 项目", first_request["summary"])
@@ -54,7 +54,7 @@ class DefaultLocalOperationsTests(unittest.IsolatedAsyncioTestCase):
             history = []
             await run_turn("检查当前项目", env_file=self.env, project_directory=self.repo, on_permission=approve, history=history)
         approve.assert_not_awaited()
-        results = [json.loads(m["content"]) for m in history if m["role"] == "tool"]
+        results = workflow_results(history)
         self.assertEqual(results[0]["error"], "project_already_open")
         self.assertNotIn("error", results[1])
         self.assertFalse((self.root / ".local/mcp.json").exists())
@@ -67,7 +67,7 @@ class DefaultLocalOperationsTests(unittest.IsolatedAsyncioTestCase):
                 call("mcp_git__git_status", {"repository": str(self.repo)}), reply("未打开。")])
             history = []
             await run_turn("打开指定项目", env_file=self.env, project_directory=self.root, on_permission=approve, history=history)
-        results = [json.loads(m["content"]) for m in history if m["role"] == "tool"]
+        results = workflow_results(history)
         self.assertEqual(results[0]["error"], "authorization_required")
         self.assertEqual(results[1]["error"], "mcp_repository_denied")
         self.assertFalse((self.root / ".local/mcp.json").exists())
@@ -94,20 +94,21 @@ class DefaultLocalOperationsTests(unittest.IsolatedAsyncioTestCase):
     async def test_edit_test_commit_push_without_configuration_requires_each_confirmation(self):
         approval = AsyncMock(return_value=True)
         with patch("dianstar.providers.deepseek.AsyncOpenAI") as factory:
-            create = factory.return_value.chat.completions.create = AsyncMock(side_effect=[
-                call("workspace_edit", {"repository": str(self.repo), "path": "README.md", "mode": "replace", "old_text": "before", "new_text": "after"}),
+            create = factory.return_value.chat.completions.create = AsyncMock(side_effect=with_review([
+                call("read", {"repository": str(self.repo), "path": "README.md"}),
+                call("edit", {"repository": str(self.repo), "path": "README.md", "old_string": "before", "new_string": "after"}),
                 call("workspace_run", {"repository": str(self.repo), "argv": [sys.executable, "-c", "from pathlib import Path; assert Path('README.md').read_text().strip() == 'after'; print('checks passed')"]}),
                 call("mcp_git__git_stage", {"repository": str(self.repo), "files": ["README.md"]}),
                 call("mcp_git__git_commit", {"repository": str(self.repo), "message": "fixture approved workflow"}),
                 call("mcp_git__git_push", {"repository": str(self.repo), "branch": "main"}),
-                reply("修改、测试、提交和推送已完成。")])
+                reply("修改、测试、提交和推送已完成。")]))
             history = []
             await run_turn("修改 README，测试后提交并推送当前项目", env_file=self.env,
                            project_directory=self.repo, on_permission=approval, history=history)
-        results = [json.loads(m["content"]) for m in history if m["role"] == "tool"]
+        results = workflow_results(history)
         self.assertTrue(all(not r.get("error") for r in results), results)
         self.assertEqual(approval.await_count, 5)
-        self.assertIn("checks passed", results[1]["content"])
+        self.assertIn("checks passed", results[2]["content"])
         self.assertEqual(git(self.repo, "rev-parse", "HEAD"), git(self.remote, "rev-parse", "refs/heads/main"))
         self.assertEqual(git(self.repo, "status", "--porcelain"), "")
         self.assertFalse((self.root / ".local/mcp.json").exists())
@@ -119,13 +120,14 @@ class DefaultLocalOperationsTests(unittest.IsolatedAsyncioTestCase):
             with self.subTest(approval=approve is not None), patch("dianstar.providers.deepseek.AsyncOpenAI") as factory:
                 marker = self.repo / "must-not-run.txt"
                 factory.return_value.chat.completions.create = AsyncMock(side_effect=[
-                    call("workspace_edit", {"repository": str(self.repo), "path": "README.md", "mode": "overwrite", "new_text": "must not save"}),
+                    call("read", {"repository": str(self.repo), "path": "README.md"}),
+                    call("write", {"repository": str(self.repo), "path": "README.md", "content": "must not save"}),
                     call("workspace_run", {"repository": str(self.repo), "argv": [sys.executable, "-c", "from pathlib import Path; Path('must-not-run.txt').touch()"]}),
                     call("mcp_git__git_push", {"repository": str(self.repo), "branch": "main"}), reply("未批准。")])
                 history = []
                 await run_turn("修改并推送", env_file=self.env, project_directory=self.repo, on_permission=approve, history=history)
-            results = [json.loads(m["content"]) for m in history if m["role"] == "tool"]
-            self.assertEqual([r.get("error") for r in results], ["authorization_required"] * 3)
+            results = workflow_results(history)
+            self.assertEqual([r.get("error") for r in results[1:]], ["authorization_required"] * 3)
             self.assertEqual((self.repo / "README.md").read_text(), "before\n")
             self.assertFalse(marker.exists())
             self.assertEqual(git(self.remote, "rev-parse", "refs/heads/main"), head)
@@ -140,7 +142,7 @@ class DefaultLocalOperationsTests(unittest.IsolatedAsyncioTestCase):
             await run_turn("检查工具", env_file=self.env, project_directory=self.repo)
         names = {t["function"]["name"] for t in create.await_args.kwargs["tools"]}
         self.assertIn("mcp_git__git_status", names)
-        self.assertFalse({"mcp_git__git_commit", "mcp_git__git_push", "workspace_edit", "workspace_delete", "workspace_run"} & names)
+        self.assertFalse({"mcp_git__git_commit", "mcp_git__git_push", "edit", "workspace_delete", "workspace_run"} & names)
 
     async def test_init_and_worktree_creation_confirm_only_the_selected_destination(self):
         new = self.root / "new-project"
@@ -154,7 +156,7 @@ class DefaultLocalOperationsTests(unittest.IsolatedAsyncioTestCase):
             approve = AsyncMock(return_value=True)
             await run_turn("初始化新项目并为当前项目创建 worktree", env_file=self.env,
                            project_directory=self.repo, on_permission=approve, history=history)
-        results = [json.loads(m["content"]) for m in history if m["role"] == "tool"]
+        results = workflow_results(history)
         self.assertTrue(all(not r.get("error") for r in results), results)
         self.assertTrue((new / ".git").is_dir())
         self.assertTrue((linked / ".git").is_file())

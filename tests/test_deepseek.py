@@ -398,11 +398,13 @@ class DeepSeekTests(unittest.IsolatedAsyncioTestCase):
         calls = [SimpleNamespace(id=f"call_{index}", function=SimpleNamespace(
             name="get_weather", arguments=f'{{"location":"{city}","date":"today"}}',
         )) for index, city in enumerate(("潮汕", "北京"), 1)]
-        weather.side_effect = [
-            WeatherLocationNotFound("City not found."),
-            {"location": "北京", "date": "2026-10-21", "temperature_max_c": 15.0,
-             "temperature_min_c": 6.0},
-        ]
+        async def by_city(location, date):
+            if location == "潮汕":
+                raise WeatherLocationNotFound("City not found.")
+            self.assertEqual(location, "北京")
+            return {"location": "北京", "date": "2026-10-21", "temperature_max_c": 15.0,
+                    "temperature_min_c": 6.0}
+        weather.side_effect = by_city
         client = client_class.return_value
         client.chat.completions.create = AsyncMock(side_effect=[
             SimpleNamespace(choices=[SimpleNamespace(finish_reason="tool_calls",
@@ -530,7 +532,7 @@ class DeepSeekTests(unittest.IsolatedAsyncioTestCase):
         names = {item["function"]["name"] for item in tools[6:]}
         self.assertTrue({"mcp_status", "mcp_git__git_status", "mcp_git__git_clone"} <= names)
         self.assertFalse({"get_mcp_configuration", "configure_mcp"} & names)
-        self.assertTrue({"mcp_git__git_commit", "mcp_git__git_push", "workspace_run", "workspace_edit"} <= names)
+        self.assertTrue({"mcp_git__git_commit", "mcp_git__git_push", "workspace_run", "edit"} <= names)
 
     @patch("dianstar.tools.local.registry.get_weather", new_callable=AsyncMock)
     @patch("dianstar.providers.deepseek.AsyncOpenAI")

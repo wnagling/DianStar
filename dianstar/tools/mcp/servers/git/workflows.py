@@ -184,8 +184,9 @@ class WorkflowMixin:
             command = ["worktree", "add", *(["-b", details["branch"]] if args.get("create_branch", True) else []),
                        "--", str(target), details["target"] if args.get("create_branch", True) else details["branch"]]
             self._query(context, command)
-            self.repositories = (*self.repositories, target)
-            self.locks[str(target)] = self.locks[str(context[0])]
+            with self.lifecycle_lock:
+                self.repositories = (*self.repositories, target)
+                self.locks[str(target)] = self.locks[str(context[0])]
             self._adopt_worktree(target)
             return {"success": True, "operation": name, "repository": str(context[0]), "created_repository": str(target), "content": str(target)}
         elif name == "git_worktree_remove":
@@ -194,8 +195,9 @@ class WorkflowMixin:
             if self._state(child)[0] != details["child_state"] or self._query(child, ["status", "--porcelain", "--ignored", "--untracked-files=all"]):
                 raise GitError("git_state_changed", "worktree 在确认后已变化。")
             self._query(context, ["worktree", "remove", "--", str(target)])
-            self.repositories = tuple(root for root in self.repositories if root != target)
-            self.managed_metadata.pop(str(target), None)
+            with self.lifecycle_lock:
+                self.repositories = tuple(root for root in self.repositories if root != target)
+                self.managed_metadata.pop(str(target), None)
             return {"success": True, "operation": name, "repository": str(context[0]), "removed_repository": str(target), "content": "已移除干净 worktree。"}
         elif name == "git_branch_rename":
             self._query(context, ["branch", "--move", details["branch"], details["new_branch"]])

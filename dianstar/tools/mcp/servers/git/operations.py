@@ -22,6 +22,7 @@ from dianstar.tools.mcp.git_contract import READ_TOOLS, WRITE_TOOLS
 from dianstar.security.processes import terminate_tree
 from dianstar.security.content_guard import protected_path, SecurityViolation
 from dianstar.hooks.git import GitSecurityHooks
+from dianstar.security.file_locks import FileLocks
 
 LABELS = {"git_stage": "暂存指定文件", "git_unstage": "取消指定文件的暂存",
           "git_create_branch": "创建分支", "git_switch_branch": "切换分支",
@@ -55,6 +56,7 @@ class GitWorkspace(GitReader):
         super().__init__(repositories)
         self.allow_writes = allow_writes
         self.plans = {}
+        self.plan_lock = threading.RLock()
         self.locks = {str(root): threading.RLock() for root in self.repositories}
         self.security = GitSecurityHooks(self)
 
@@ -437,25 +439,33 @@ class GitWorkspace(GitReader):
         description = self.security.hooks.scanner.redact("\n".join(lines))
         if len(description) > 24000:
             raise GitError("git_preview_too_large", "待确认内容过长，请缩小暂存或提交范围，不能省略差异后直接批准。")
-        self.plans = {token: plan for token, plan in self.plans.items() if plan["expires"] > time.monotonic()}
-        if len(self.plans) >= 30:
-            raise GitError("git_plan_limit", "本轮 Git 预览数量已达上限。")
-        token = secrets.token_urlsafe(32)
-        self.plans[token] = dict(repository=str(root), name=name, arguments=arguments,
-                                 snapshot=snapshot, details=details, expires=time.monotonic() + 600)
+        token = self.store_plan(dict(repository=str(root), name=name, arguments=arguments,
+                                     snapshot=snapshot, details=details))
         preview = {"prepared": True, "token": token, "description": description}
         if name == "git_push":
             preview["remote_target"] = {"url": self.security.hooks.scanner.redact(details["url"]),
                                         "remote": details["remote"], "branch": details["target"]}
         return preview
 
+    def store_plan(self, plan):
+        with self.plan_lock:
+            self.plans = {token: value for token, value in self.plans.items() if value["expires"] > time.monotonic()}
+            if len(self.plans) >= 30:
+                raise GitError("git_plan_limit", "本轮 Git 预览数量已达上限。")
+            token = secrets.token_urlsafe(32)
+            self.plans[token] = {**plan, "expires": time.monotonic() + 600}
+            return token
+
     def apply(self, token):
-        plan = self.plans.pop(token, None)
+        with self.plan_lock:
+            plan = self.plans.pop(token, None)
         if plan is None or plan["expires"] <= time.monotonic():
             return {"error": "git_plan_expired", "message": "操作预览已过期或已使用，未执行。"}
         try:
             context = self._context(plan["repository"])
-            with self.locks[plan["repository"]]:
+            coordinated = FileLocks()
+            with coordinated.repository(context[0]), self.locks[plan["repository"]]:
+                coordinated.ensure_ready(context[0])
                 if self._state(context)[0] != plan["snapshot"]:
                     raise GitError("git_state_changed", "批准后文件、暂存区、分支、引用或远程配置已改变，未执行；请重新检查。")
                 return self._apply(context, plan)

@@ -43,6 +43,38 @@ class FallbackTests(unittest.IsolatedAsyncioTestCase):
             results.append({**arguments, 'api_fallback':result['api_fallback']})
         return results
 
+    async def test_concurrent_paid_requests_share_one_decision_and_isolate_free_provider(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            async def approve(request):
+                await asyncio.sleep(.02)
+                return 'turn'
+            approval = AsyncMock(side_effect=approve)
+            async with self.service(Path(temporary), approve=approval) as service:
+                both_paid, free_done = asyncio.Event(), asyncio.Event()
+                paid_started = 0
+                async def fetch(url):
+                    nonlocal paid_started
+                    if url.endswith('/three'):
+                        await asyncio.wait_for(both_paid.wait(), 3)
+                        self.assertEqual(service._provider, 'free')
+                        free_done.set()
+                        return {'provider': 'free', 'url': url, 'content': 'fixture'}
+                    if service._provider == 'free':
+                        raise WebError('empty_page', 'fixture restriction')
+                    paid_started += 1
+                    if paid_started == 2:
+                        both_paid.set()
+                    await asyncio.wait_for(free_done.wait(), 3)
+                    self.assertEqual(service._provider, 'deepseek')
+                    return {'provider': service._provider, 'url': url, 'content': 'fixture'}
+                service.fetch = fetch
+                tokens = await self.prepare(service)
+                results = await asyncio.gather(*(service.execute('read_webpage', item) for item in tokens),
+                    service.execute('read_webpage', {'url': 'https://example.com/three'}))
+                self.assertEqual([item.get('provider') for item in results], ['deepseek', 'deepseek', 'free'], results)
+                self.assertEqual(service.paid_calls, 2)
+                approval.assert_awaited_once()
+
     async def test_first_irrelevant_search_never_prompts_even_with_persistent_allow(self):
         with tempfile.TemporaryDirectory() as temporary:
             for policy in ['ask', 'allow']:
@@ -151,8 +183,10 @@ class FallbackTests(unittest.IsolatedAsyncioTestCase):
                 answer = await run_turn('核对多个必要来源',env_file=env,on_paid_web=approve)
             self.assertEqual(answer,'已核对资料')
             self.assertEqual(step,13)
-            self.assertEqual(visited, [(provider, f'https://example.com/{index}')
-                                      for provider in ('free', 'deepseek') for index in range(30)])
+            # Independent reads may finish out of order, but paid continuations
+            # must still follow all six free batches and retain every URL.
+            self.assertCountEqual(visited[:30], [('free', f'https://example.com/{index}') for index in range(30)])
+            self.assertCountEqual(visited[30:], [('deepseek', f'https://example.com/{index}') for index in range(30)])
             approve.assert_awaited_once()
 
     async def test_thirty_free_failures_then_thirty_paid_continuations_have_independent_budgets(self):

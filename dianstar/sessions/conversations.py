@@ -11,6 +11,7 @@ from pathlib import Path
 
 from dianstar.config.models import DEFAULT_MODEL as MODEL
 from dianstar.config.paths import PROJECT_ROOT
+from .tool_activity import valid_activity
 
 
 CONVERSATION_DIR = PROJECT_ROOT / ".local" / "conversations"
@@ -42,7 +43,7 @@ class ConversationEntry:
 class Conversation:
     id: str
     created_at: str
-    messages: list[dict[str, str]] = field(default_factory=list)
+    messages: list[dict[str, object]] = field(default_factory=list)
     context_start: int = 0
     model_messages: list[dict[str, object]] = field(default_factory=list)
     model_context_start: int = 0
@@ -96,6 +97,7 @@ class Conversation:
                 or ("reasoning_content" in message and (
                     index % 2 == 0 or not isinstance(message["reasoning_content"], str)
                 ))
+                or ("tool_activity" in message and (index % 2 == 0 or not valid_activity(message["tool_activity"])))
                 for index, message in enumerate(messages)
             )
         ):
@@ -147,16 +149,22 @@ class Conversation:
         return self.model_messages[self.model_context_start :]
 
     def add_exchange(self, question: str, answer: str, *, reasoning_content: str | None = None,
-                     model_turn_messages: list[dict[str, object]] | None = None) -> None:
+                     model_turn_messages: list[dict[str, object]] | None = None,
+                     tool_activity: list[dict] | None = None) -> None:
         name = self.name if self.name is not None else _default_name(question)
         assistant_message = {"role": "assistant", "content": answer}
         if reasoning_content is not None:
             assistant_message["reasoning_content"] = reasoning_content
+        if tool_activity is not None:
+            if not valid_activity(tool_activity):
+                raise ValueError("Invalid tool activity records")
+            from copy import deepcopy
+            assistant_message["tool_activity"] = deepcopy(tool_activity)
         messages = [*self.messages, {"role": "user", "content": question},
                     assistant_message]
         model_messages = [*self.model_messages, *(model_turn_messages if model_turn_messages is not None
                                                   else [{"role": "user", "content": question},
-                                                        assistant_message])]
+                                                        {key: value for key, value in assistant_message.items() if key != "tool_activity"}])]
         self._save(messages, self.context_start, model_messages, self.model_context_start, name)
         self.messages = messages
         self.model_messages = model_messages

@@ -130,9 +130,9 @@ class HookToolIntegrationTests(unittest.IsolatedAsyncioTestCase):
                 lambda _, path, data: [Finding(path, 1, "项目写入规则拒绝")]),))
             approve = AsyncMock(return_value=True)
             gateway = ToolGateway(auth, tools.registrations(), approve,
-                                  policies={"workspace_edit": ToolPolicy(requires_approval=False)})
-            result = await gateway.execute(ToolAction("workspace_edit", {"repository": str(root),
-                "path": "a.txt", "mode": "create", "new_text": "a"}))
+                                  policies={"write": ToolPolicy(requires_approval=False)})
+            result = await gateway.execute(ToolAction("write", {"repository": str(root),
+                "path": "a.txt", "content": "a"}))
             self.assertEqual(result.result["error"], "sensitive_content_denied")
             self.assertFalse((root / "a.txt").exists())
             approve.assert_not_awaited()

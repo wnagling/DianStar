@@ -7,18 +7,26 @@ import sys
 from .content_guard import protected_path
 
 
-def command_plan(argv, root):
+class ExecutableUnavailable(ValueError):
+    pass
+
+
+def command_plan(argv, root, *, environment=None):
     """Bind execution to the executable selected during preparation."""
     executable = argv[0]
     if "/" in executable or "\\" in executable:
         path = Path(executable)
         path = path if path.is_absolute() else root / path
     else:
-        found = shutil.which(executable)
+        found = shutil.which(executable, path=environment.get("PATH", os.defpath)) if environment is not None else shutil.which(executable)
         if found is None:
-            raise ValueError("Executable unavailable")
+            raise ExecutableUnavailable("Executable unavailable in command environment")
         path = Path(found)
-    path = path.resolve(strict=True)
+    try:
+        from dianstar.platform.toolchains import resolve_launcher
+        path = resolve_launcher(path)
+    except FileNotFoundError:
+        raise ExecutableUnavailable("Executable path unavailable") from None
     if not path.is_file():
         raise ValueError("Invalid executable")
     stat = path.stat()

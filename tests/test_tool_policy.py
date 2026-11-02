@@ -12,7 +12,7 @@ from dianstar.security.authorization import Authorization
 from dianstar.security.gateway import ToolGateway, ToolPreparationError
 from dianstar.security.tool_policy import ToolPolicy
 from tests.test_mcp_startup import git
-from tests.test_permissions import call, reply
+from tests.test_permissions import call, reply, with_review, workflow_results
 
 
 def registration(name="change", capability="fixture.write"):
@@ -108,19 +108,19 @@ class RuntimeToolPolicyTests(unittest.IsolatedAsyncioTestCase):
             env.write_text("DEEPSEEK_API_KEY=fixture-model-key\n")
             create = factory.return_value.chat.completions.create = AsyncMock(side_effect=[
                 call("configure_mcp", {"changes": {"git_enabled": None, "workspace_write_enabled": True}}),
-                call("workspace_read", {"repository": str(root), "path": "README.md"}), call("mcp_status", {}), reply("已读取。")])
+                call("read", {"repository": str(root), "path": "README.md"}), call("mcp_status", {}), reply("已读取。")])
             history = []
             approval = AsyncMock(return_value=True)
             await run_turn("连接并读取当前项目", env_file=env, project_directory=root, history=history, on_permission=approval,
                            tool_policies={"workspace.write": ToolPolicy(enabled=False)}, allow_backend_configuration=True)
             names = {s["function"]["name"] for s in create.await_args_list[1].kwargs["tools"]}
-            self.assertNotIn("workspace_edit", names)
+            self.assertNotIn("edit", names)
             self.assertNotIn("workspace_run", names)
-            self.assertIn("workspace_read", names)
+            self.assertIn("read", names)
             results = [json.loads(m["content"]) for m in history if m["role"] == "tool"]
             self.assertTrue(results[0]["reconnected"])
             self.assertIn("before", results[1]["content"])
-            self.assertFalse(results[2]["tool_policies"]["workspace_edit"]["enabled"])
+            self.assertFalse(results[2]["tool_policies"]["edit"]["enabled"])
             self.assertFalse(results[2]["workspace_writes_enabled"])
             approval.assert_awaited_once()
 
@@ -132,14 +132,14 @@ class RuntimeToolPolicyTests(unittest.IsolatedAsyncioTestCase):
             env = root / ".env"
             env.write_text("DEEPSEEK_API_KEY=fixture-model-key\n")
             create = factory.return_value.chat.completions.create = AsyncMock(side_effect=[
-                call("workspace_edit", {"repository": str(root), "path": "README.md", "mode": "overwrite", "new_text": "after"}), reply("未执行。")])
+                call("write", {"repository": str(root), "path": "README.md", "content": "after"}), reply("未执行。")])
             approval = AsyncMock(return_value=True)
             history = []
             await run_turn("读取项目", env_file=env, project_directory=root, history=history, on_permission=approval,
                            tool_policies={"workspace.write": ToolPolicy(enabled=False)})
             names = {s["function"]["name"] for s in create.await_args_list[0].kwargs["tools"]}
-            self.assertIn("workspace_read", names)
-            self.assertNotIn("workspace_edit", names)
+            self.assertIn("read", names)
+            self.assertNotIn("edit", names)
             self.assertEqual((root / "README.md").read_text(), "before\n")
             approval.assert_not_awaited()
 
@@ -150,14 +150,15 @@ class RuntimeToolPolicyTests(unittest.IsolatedAsyncioTestCase):
             (root / "README.md").write_text("before\n")
             env = root / ".env"
             env.write_text("DEEPSEEK_API_KEY=fixture-model-key\n")
-            factory.return_value.chat.completions.create = AsyncMock(side_effect=[
-                call("workspace_edit", {"repository": str(root), "path": "README.md", "mode": "replace", "old_text": "before", "new_text": "after"}),
-                call("mcp_status", {}), reply("已修改。")])
+            factory.return_value.chat.completions.create = AsyncMock(side_effect=with_review([
+                call("read", {"repository": str(root), "path": "README.md"}),
+                call("edit", {"repository": str(root), "path": "README.md", "old_string": "before", "new_string": "after"}),
+                call("mcp_status", {}), reply("已修改。")]))
             history = []
             await run_turn("修改项目", env_file=env, project_directory=root, history=history,
                            tool_policies={"workspace.write": ToolPolicy(requires_approval=False)})
             self.assertEqual((root / "README.md").read_text(), "after\n")
-            result = next(json.loads(m["content"]) for m in history if m["role"] == "tool")
+            result = [json.loads(m["content"]) for m in history if m["role"] == "tool"][1]
             self.assertTrue(result["success"])
-            status = [json.loads(m["content"]) for m in history if m["role"] == "tool"][-1]
-            self.assertFalse(status["tool_policies"]["workspace_edit"]["requires_approval"])
+            status = next(result for result in workflow_results(history) if "tool_policies" in result)
+            self.assertFalse(status["tool_policies"]["edit"]["requires_approval"])

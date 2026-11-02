@@ -10,6 +10,8 @@ from dianstar.security.approval_summary import approval_details
 
 
 class PermissionApproval(ModalScreen[bool]):
+    AUTO_FOCUS = "#permission-cancel"
+
     CSS = """
     PermissionApproval { align: center bottom; background: $background 20%; }
     #permission-panel { width: 72; max-width: 94%; height: 16; max-height: 85%; padding: 0 1; margin-bottom: 1;
