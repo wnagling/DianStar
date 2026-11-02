@@ -188,7 +188,7 @@ class FileRecoveryTests(unittest.IsolatedAsyncioTestCase):
 
     async def test_batch_local_configuration_approval_masks_unquoted_credentials(self):
         # Synthetic fixture: exercise redaction without publishing a credential literal.
-        secret = " ".join(("local", "only", "synthetic", "password"))
+        secret = "-".join(("local", "only", "synthetic", "password"))
         requests = []
         async def approve(request):
             requests.append(request)
