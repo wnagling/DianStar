@@ -14,7 +14,7 @@ TITLES = {"read": "读取文件", "glob": "查找文件", "grep": "搜索文件�
     "workspace_scratch_list": "查看临时工作区",
     "patch": "应用文件修改", "move": "移动或重命名文件", "workspace_delete": "删除文件", "file_batch": "修改一批文件",
     "file_restore": "恢复文件", "file_history": "查看恢复记录", "review_changes": "检查本次改动", "record_review": "核对任务完成情况",
-    "task_status": "查看任务进度", "open_project": "打开项目", "mcp_status": "检查工具连接", "search_web": "检索网页",
+    "task_status": "查看任务进度", "open_project": "打开项目", "mcp_status": "检查工具连接", "tool_status": "查看工具状态", "search_web": "检索网页",
     "read_webpage": "读取网页", "get_weather": "查询天气", "calculate_number": "计算数值", "calculate_date": "计算日期",
     "workspace_environment_get": "查询项目开发环境", "workspace_environment_clear": "清除项目开发环境"}
 READ_GIT = {"git_status": "查看项目状态", "git_diff": "查看文件差异", "git_log": "查看提交记录",
@@ -79,7 +79,8 @@ class ToolEvents:
             status = "cancelled"
         elif error in {"authorization_required", "authorization_denied", "authorization_expired", "authorization_changed",
                        "tool_disabled", "tool_not_authorized", "invalid_tool_arguments", "host_path_denied", "dangerous_command_denied",
-                       "command_isolation_unavailable", "command_runtime_inaccessible", "shell_incompatible_with_isolation"}:
+                       "command_isolation_unavailable", "command_runtime_inaccessible", "shell_incompatible_with_isolation",
+                       "local_project_disabled", "local_project_readonly"}:
             status = "not_executed"
         review = result.get("security_review", {})
         if status == "success" and (result.get("isolation_cleanup_pending") or isinstance(review, dict) and (review.get("complete") is False or review.get("findings"))):

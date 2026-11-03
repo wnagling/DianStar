@@ -18,7 +18,7 @@ from dianstar.platform.shells import find_bash, find_powershell
 from dianstar.security.content_guard import Finding
 from dianstar.security.gateway import ToolGateway
 from dianstar.security.tool_policy import ToolPolicy
-from dianstar.tools.local.workspace import WorkspaceTools
+from tests.project_fixtures import workspace_tools as WorkspaceTools
 from tests import test_file_tools as fixtures
 
 

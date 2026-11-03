@@ -120,7 +120,6 @@ class MCPTools:
                 "tools": list(self.registry), "read_only": not ((self.settings.git_enabled and (self.settings.git_write_enabled or self.allow_clone))
                     or (self.settings.github_enabled and self.settings.github_write_repositories)),
                 "git_repository_writes_enabled": self.settings.git_write_enabled,
-                "workspace_writes_enabled": self.settings.workspace_write_enabled,
                 "git_writes_require_approval": True, "github_writes_require_approval": True}
 
     async def prepare_git(self, name, arguments):

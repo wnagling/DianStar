@@ -29,6 +29,7 @@ from dianstar.app.permission_control import apply_permission_intent
 from dianstar.app.mcp_configuration import registrations as mcp_configuration_tools
 from dianstar.app.project_access import registrations as project_access_tools
 from dianstar.app.mcp_startup import resolve_connections
+from dianstar.app.project_context import create_project_context
 from dianstar.tools.local.github_admin import GitHubAdmin
 from dianstar.tools.local.workspace import WorkspaceTools
 from dianstar.tools.local.files import FILE_TOOL_NAMES, migrate_file_policies
@@ -82,6 +83,10 @@ async def run_turn(
     task_scope = TaskScope.from_question(question, project_directory)
     active_settings, startup_status = resolve_connections(mcp_settings, env_file, project_directory)
     automatic_repositories = set(active_settings.git_repositories) - set(mcp_settings.git_repositories)
+    project_config_path = env_file.parent / ".local/projects.json"
+    projects, project_status = create_project_context(authorization, project_directory, project_config_path,
+        legacy=mcp_settings, legacy_invalid=mcp_error is not None)
+
     approval_lock = asyncio.Lock()
     async def confirm(request):
         async with approval_lock:
@@ -98,7 +103,10 @@ async def run_turn(
         try:
             log = TurnLog(authorization.request_id, ContentScanner(known=known_credentials(env_file,
                 extra=(mcp.github.token(),) if getattr(mcp, "github", None) else ())), conversation_id=conversation_id)
-            workspace = WorkspaceTools(mcp, env_file, conversation_id=conversation_id, task_scope=task_scope)
+            projects.credentials = lambda: (mcp.github.token(),) if getattr(mcp, "github", None) else ()
+            workspace = WorkspaceTools(projects, env_file, conversation_id=conversation_id, task_scope=task_scope)
+            local_settings = projects.settings
+            local_registrations = workspace.registrations()
             review = ChangeReview(lambda: workspace, log)
             builtin_registry, act_web = build_local_registry(web, evidence, env_file, search_settings)
             # Built-ins and MCP tools are registered separately, then share one execution gateway.
@@ -113,6 +121,11 @@ async def run_turn(
 
             gateway = ToolGateway(authorization, tool_registry, confirm if on_permission else None, policies=migrate_file_policies(tool_policies))
             def save_repositories(repositories):
+                for repository in repositories:
+                    try:
+                        projects.include(repository)
+                    except (ValueError, OSError):
+                        pass
                 nonlocal mcp_settings
                 if load_mcp_settings(mcp_path) != mcp_settings:
                     raise ValueError("MCP configuration changed during execution")
@@ -120,12 +133,12 @@ async def run_turn(
                 mcp_settings = save_mcp_settings(replace(mcp_settings, git_repositories=saved), mcp_path)
             mcp.on_repositories_changed = save_repositories
             async def reconnect_mcp(settings, *, directory=None):
-                nonlocal mcp_settings, automatic_repositories, active_settings, project_directory, workspace
+                nonlocal mcp_settings, automatic_repositories, active_settings, project_directory
                 if directory is not None:
                     project_directory = directory
                 await mcp.__aexit__(None, None, None)
                 for name in list(tool_registry):
-                    if name in {"bash", "shell"} or name in FILE_TOOL_NAMES or name.startswith(("mcp_git__", "mcp_github__", "github_repository_", "github_branch_", "github_collaborators", "workspace_")):
+                    if name.startswith(("mcp_git__", "mcp_github__", "github_repository_", "github_branch_", "github_collaborators")):
                         tool_registry.pop(name)
                 active_settings, status = resolve_connections(settings, env_file, project_directory)
                 automatic_repositories = set(active_settings.git_repositories) - set(settings.git_repositories)
@@ -137,14 +150,30 @@ async def run_turn(
                 mcp.status.update(status)
                 tool_registry.update(task_git_defaults(mcp.registry, task_scope))
                 tool_registry.update(GitHubAdmin(active_settings, env_file, authorization).registrations())
-                workspace = WorkspaceTools(mcp, env_file, conversation_id=conversation_id, task_scope=task_scope, storage_manager=workspace.storage.manager)
-                tool_registry.update(workspace.registrations())
-                tool_registry.update(review.registrations())
+                workspace.refresh_credentials()
                 session.tools = gateway.available_schemas()
             # Internal settings are not a step in ordinary coding tasks.
             if allow_backend_configuration:
                 tool_registry.update(mcp_configuration_tools(mcp_path, reconnect_mcp))
-            tool_registry.update(project_access_tools(mcp_path, reconnect_mcp, lambda: project_directory, question=question))
+            async def opened_project(directory):
+                nonlocal project_directory, project_status, local_settings, local_registrations
+                project_directory = directory
+                project_status = {}
+                if (projects.settings.enabled, projects.settings.write_enabled) != (local_settings.enabled, local_settings.write_enabled):
+                    for name in local_registrations:
+                        tool_registry.pop(name, None)
+                    local_settings = projects.settings
+                    local_registrations = workspace.registrations()
+                    tool_registry.update(local_registrations)
+                # Local reads/writes retain their snapshots and registration
+                # while optional version-control connections are refreshed.
+                try:
+                    await reconnect_mcp(mcp_settings, directory=directory)
+                except Exception:
+                    session.tools = gateway.available_schemas()
+                    return "本地项目已打开，可选 Git/GitHub 连接未完成；本地工具仍可使用。"
+            tool_registry.update(project_access_tools(project_config_path, projects, opened_project,
+                lambda: project_directory, question=question))
 
             async def act(action: ToolAction) -> Observation:
                 result = await gateway.execute(action)
@@ -238,14 +267,24 @@ async def run_turn(
                 info["configuration_file"] = str(mcp_path)
                 info["configuration_exists"] = mcp_path.exists()
                 info["project_directory"] = str(project_directory)
+                info["local_project"] = {"roots": sorted(projects.roots), "enabled": projects.settings.enabled,
+                    "write_enabled": projects.settings.write_enabled, "configuration_file": str(project_config_path),
+                    "status": project_status}
+                info["tool_groups"] = {"local": [name for name in info["tools"] if not name.startswith(("mcp_git__", "mcp_github__"))],
+                    "git_mcp": [name for name in info["tools"] if name.startswith("mcp_git__")],
+                    "github_mcp": [name for name in info["tools"] if name.startswith("mcp_github__")]}
                 info["scratch_workspaces"] = list(workspace.storage.manager.scratch_roots)
                 info["connection_modes"] = {"git": "automatic" if mcp_settings.git_enabled is None else mcp_settings.git_enabled,
                                             "github": "automatic" if mcp_settings.github_enabled is None else mcp_settings.github_enabled}
                 return Observation(action, info)
             tool_registry["mcp_status"] = ToolRegistration(MCP_STATUS_TOOL, "permissions.read", act_mcp_status)
+            tool_registry["tool_status"] = ToolRegistration({"type": "function", "function": {"name": "tool_status",
+                "description": "查看本地项目、文件、命令及可选外部工具的实际状态与后台策略；只查询，不开启权限或修改连接。",
+                "parameters": {"type": "object", "properties": {}, "additionalProperties": False}}},
+                "permissions.read", act_mcp_status, parallel_safe=True)
             tool_registry.update(task_git_defaults(mcp.registry, task_scope))
             tool_registry.update(GitHubAdmin(active_settings, env_file, authorization).registrations())
-            tool_registry.update(workspace.registrations())
+            tool_registry.update(local_registrations)
             tool_registry.update(review.registrations())
             session.tools = gateway.available_schemas()
             previous = log.previous()

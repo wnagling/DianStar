@@ -149,7 +149,8 @@ def approval_summary(name, args, description):
             temporary = False
         association = "\n关联主项目：" + "、".join(map(plain, related)) if related else ""
         usage = "仅在本轮使用，不保存项目路径。" if temporary else "记住这个项目，方便后续使用。"
-        return f"是否打开 {project} 项目？\n\n项目位置：{path}{association}\n\n{usage}\n本次不会提交或推送代码，后续修改仍需按策略确认。"
+        opening = "创建并打开" if args.get("create", False) else "打开"
+        return f"是否{opening} {project} 项目？\n\n项目位置：{path}{association}\n\n{usage}\n本次不会初始化 Git、安装程序或提交推送，后续修改仍需按策略确认。"
     if operation == "git_clone":
         url = plain(args["url"])
         project = PurePosixPath((urlsplit(url).path or url).replace("\\", "/")).name.removesuffix(".git")

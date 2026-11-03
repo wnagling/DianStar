@@ -17,7 +17,7 @@ from dianstar.security.approval_summary import approval_summary, approval_detail
 from dianstar.security.command_summary import activity
 from dianstar.security.gateway import ToolGateway
 from dianstar.security.tool_policy import ToolPolicy
-from dianstar.tools.local.workspace import WorkspaceTools
+from tests.project_fixtures import workspace_tools as WorkspaceTools
 from tests import test_file_tools as fixtures
 
 

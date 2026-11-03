@@ -1,4 +1,4 @@
-"""Bounded discovery; Git supplies its own ignore semantics."""
+"""Bounded filesystem discovery with project-local ignore semantics."""
 from functools import lru_cache
 from itertools import islice
 import fnmatch
@@ -7,6 +7,7 @@ from pathlib import Path, PurePosixPath
 
 from dianstar.security.content_guard import protected_path
 from .text import FileError
+from .ignore import IgnoreRules
 
 MAX_PATHS = 10000
 SKIP = {".git", ".local", ".ssh", ".aws", "node_modules", ".venv", "__pycache__", "build", "dist", "target"}
@@ -30,17 +31,8 @@ def directory_entries(context, args):
             selected.append((relative, child.name + ("/" if child.is_dir() else "")))
         except (ValueError, OSError):
             continue
-    if (root / ".git").exists() and selected:
-        from dianstar.tools.mcp.servers.git.workspace import GitWorkspace
-        git = GitWorkspace([root])
-        code, raw = git._invoke(git._context(str(root)), ["check-ignore", "--no-index", "-z", "--stdin"],
-            optional=True, input_data=("\0".join(path for path, _ in selected) + "\0").encode())
-        if code not in {0, 1}:
-            raise FileError("file_scan_incomplete", "无法核对目录忽略规则。")
-        ignored = set(item.decode("utf-8") for item in raw.split(b"\0") if item)
-        selected = [(path, label) for path, label in selected if path not in ignored]
-    elif not (root / ".git").exists() and (root / ".gitignore").exists():
-        raise FileError("file_scan_incomplete", "缺少有效 Git 元数据，无法准确核对忽略规则。")
+    ignore = IgnoreRules(root, match_glob)
+    selected = [(path, label) for path, label in selected if not ignore.ignored(path, label.endswith("/"))]
     return [label for _, label in selected], len(children) > MAX_PATHS
 
 
@@ -70,33 +62,19 @@ def inventory(context, args):
         raise FileError("file_not_directory", "搜索范围必须是项目内目录。")
     prefix = directory.relative_to(root).as_posix()
     prefix = "" if prefix == "." else prefix + "/"
-    if (root / ".git").exists():
-        # Reuse the application's Git configuration and resource checks, without
-        # MCP transport, hooks, filters or shell command composition.
-        from dianstar.tools.mcp.servers.git.workspace import GitWorkspace
-        workspace = GitWorkspace([root])
-        git_context = workspace._context(str(root))
-        raw = workspace._query(git_context, ["ls-files", "--cached", "--others", "--exclude-standard", "-z",
-            *(["--", ":(literal)" + prefix.rstrip("/")] if prefix else [])])
-        candidates = list(dict.fromkeys(item.decode("utf-8") for item in raw.split(b"\0") if item))
-        if candidates:
-            code, ignored = workspace._invoke(git_context, ["check-ignore", "--no-index", "-z", "--stdin"],
-                optional=True, input_data=("\0".join(candidates) + "\0").encode())
-            if code not in {0, 1}:
-                raise FileError("file_scan_incomplete", "无法核对项目忽略规则，未继续搜索。")
-            excluded = set(item.decode("utf-8") for item in ignored.split(b"\0") if item)
-            candidates = [item for item in candidates if item not in excluded]
-    else:
-        if (root / ".gitignore").exists():
-            raise FileError("file_scan_incomplete", "当前目录缺少有效 Git 元数据，无法准确核对忽略规则。")
-        candidates = []
-        for parent, directories, files in os.walk(directory, followlinks=False):
-            directories[:] = sorted(name for name in directories if name not in SKIP
-                and not protected_path((Path(parent) / name).relative_to(root).as_posix())
-                and (Path(parent) / name).resolve() == (Path(parent) / name).absolute())
-            candidates.extend((Path(parent) / name).relative_to(root).as_posix() for name in sorted(files))
-            if len(candidates) > MAX_PATHS:
-                break
+    candidates = []
+    ignore = IgnoreRules(root, match_glob)
+    def scan_error(error):
+        raise FileError("file_scan_incomplete", "部分项目目录无法读取，搜索未完成。") from error
+    for parent, directories, files in os.walk(directory, followlinks=False, onerror=scan_error):
+        directories[:] = sorted(name for name in directories if name not in SKIP
+            and not protected_path((Path(parent) / name).relative_to(root).as_posix())
+            and (Path(parent) / name).resolve() == (Path(parent) / name).absolute()
+            and not ignore.ignored((Path(parent) / name).relative_to(root).as_posix(), True))
+        candidates.extend((Path(parent) / name).relative_to(root).as_posix() for name in sorted(files)
+            if not ignore.ignored((Path(parent) / name).relative_to(root).as_posix()))
+        if len(candidates) > MAX_PATHS:
+            break
     result = []
     for relative in sorted(candidates):
         parts = PurePosixPath(relative).parts

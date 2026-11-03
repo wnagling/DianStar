@@ -82,6 +82,7 @@ class FileWriter:
                     "sha256": hashlib.sha256(data).hexdigest()}, "phase": "pending", "parents": parents}
 
     def preview_sync(self, name, args, cancel):
+        self.context.projects.require(write=True)
         root = self.context.root(args)
         if name in {"patch", "move"}:
             paths = [self.context.path({"repository": args["repository"], "path": path}) for path in transform_paths(name, args)]
@@ -192,10 +193,11 @@ class FileWriter:
             raise ToolPreparationError("file_preparation_failed", "文件锁、恢复记录或修改预检未完成，未申请执行。") from None
 
     def apply_sync(self, action, cancel):
+        self.context.projects.require(write=True)
         args, name = action.arguments, action.name
         with self.prepared_lock:
             item = self.prepared.pop(request_key(name, args), None)
-        if item is None or time.monotonic() - item[0] > 600 or not self.context.mcp.authorization.active:
+        if item is None or time.monotonic() - item[0] > 600 or not self.context.projects.authorization.active:
             return {"error": "file_not_prepared"}
         plan = item[1]
         root = self.context.root(args)
@@ -221,7 +223,7 @@ class FileWriter:
                     raise FileError("file_changed", "确认期间文件已变化，未覆盖；请重新读取。")
                 if entry["after"] is not None:
                     self.context.security.run("before_write", [(entry["path"], contents(entry["after"]))], local_only=entry["local_only"])
-            result = self.context.files.commit(root, plan["entries"], self.context.mcp.authorization.request_id, cancel)
+            result = self.context.files.commit(root, plan["entries"], self.context.projects.authorization.request_id, cancel)
             if result.get("success") and plan.get("source") is not None:
                 try:
                     result["directories_preserved"] = self.context.files.cleanup(root, plan["source"], directories=True)

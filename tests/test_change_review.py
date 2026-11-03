@@ -13,7 +13,7 @@ from dianstar.core.types import ToolAction, Observation
 from dianstar.security.authorization import Authorization
 from dianstar.security.content_guard import ContentScanner
 from dianstar.security.gateway import ToolGateway
-from dianstar.tools.local.workspace import WorkspaceTools
+from tests.project_fixtures import workspace_tools as WorkspaceTools
 
 
 class ChangeReviewTests(unittest.IsolatedAsyncioTestCase):

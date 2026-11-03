@@ -25,7 +25,7 @@ class MCPSettings:
     git_workspace_roots: tuple[str, ...] = ()
     github_admin_repositories: tuple[str, ...] | None = None
     github_use_git_credentials: bool = False
-    workspace_write_enabled: bool | None = None
+    workspace_write_enabled: bool | None = None  # Legacy read/migration only; local policy lives in projects.json.
 
 
 def normalize(data: dict) -> MCPSettings:

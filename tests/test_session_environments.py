@@ -25,7 +25,7 @@ from dianstar.security.content_guard import ContentScanner
 from dianstar.security.gateway import ToolGateway
 from dianstar.security.tool_policy import ToolPolicy
 from dianstar.sessions.environments import EnvironmentProfileError, EnvironmentStore
-from dianstar.tools.local.workspace import WorkspaceTools
+from tests.project_fixtures import workspace_tools as WorkspaceTools
 from tests import test_file_tools as fixtures
 
 

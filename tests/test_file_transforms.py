@@ -18,7 +18,7 @@ from dianstar.security.authorization import Authorization
 from dianstar.security.gateway import ToolGateway
 from dianstar.security.tool_policy import ToolPolicy
 from dianstar.tools.local.files.inspection import inspect_changes
-from dianstar.tools.local.workspace import WorkspaceTools
+from tests.project_fixtures import workspace_tools as WorkspaceTools
 from tests import test_file_tools as fixtures
 
 
@@ -314,7 +314,7 @@ from dianstar.config.mcp import MCPSettings
 from dianstar.core.types import ToolAction
 from dianstar.security.authorization import Authorization
 from dianstar.security.gateway import ToolGateway
-from dianstar.tools.local.workspace import WorkspaceTools
+from tests.project_fixtures import workspace_tools as WorkspaceTools
 root,env=Path(sys.argv[1]),Path(sys.argv[2])
 auth=Authorization()
 tools=WorkspaceTools(SimpleNamespace(settings=MCPSettings(git_enabled=True,workspace_write_enabled=True),

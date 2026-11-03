@@ -55,7 +55,7 @@ class FileTools:
         return Observation(action, await self.writer.apply(action))
 
     def registrations(self):
-        if not self.context.mcp.settings.git_enabled:
+        if not self.context.projects.settings.enabled:
             return {}
         string = {"type": "string"}
         path = {"type": "string", "minLength": 1, "description": "相对 repository 的项目内路径，使用 / 分隔。"}
@@ -95,7 +95,7 @@ class FileTools:
         result = {}
         for name, (properties, required, description) in definitions.items():
             mutation = name in {"edit", "write", "patch", "move", "workspace_delete", "file_batch", "file_restore"}
-            if mutation and not self.context.mcp.settings.workspace_write_enabled:
+            if mutation and not self.context.projects.settings.write_enabled:
                 continue
             async def preview(args, name=name):
                 return await self.writer.preview(name, args)
@@ -117,5 +117,5 @@ class FileTools:
             if name in {"write", "file_batch"}:
                 from dataclasses import replace
                 result[name] = replace(result[name], auto_approve=automatic)
-        self.context.mcp.authorization.grant("workspace.read", uses=60)
+        self.context.projects.authorization.grant("workspace.read", uses=60)
         return result

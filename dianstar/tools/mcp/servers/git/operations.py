@@ -8,18 +8,15 @@ import re
 import secrets
 import shlex
 import shutil
-import subprocess
 import sys
 import tempfile
 import threading
 import time
 from urllib.parse import urlsplit
-from urllib.request import getproxies
 
-from dianstar.tools.mcp.servers.git.reader import GitReader
+from dianstar.platform.git_queries import SafeGitQueries, GitError
 
 from dianstar.tools.mcp.git_contract import READ_TOOLS, WRITE_TOOLS
-from dianstar.security.processes import terminate_tree
 from dianstar.security.content_guard import protected_path, SecurityViolation
 from dianstar.hooks.git import GitSecurityHooks
 from dianstar.security.file_locks import FileLocks
@@ -29,10 +26,6 @@ LABELS = {"git_stage": "暂存指定文件", "git_unstage": "取消指定文件�
           "git_commit": "创建提交", "git_fetch": "获取远程分支", "git_push": "推送提交"}
 
 
-class GitError(Exception):
-    def __init__(self, code, message):
-        self.code, self.message = code, message
-        super().__init__(message)
 
 
 def digest(data):
@@ -51,7 +44,7 @@ def branch_name(value):
     return value
 
 
-class GitWorkspace(GitReader):
+class GitWorkspace(SafeGitQueries):
     def __init__(self, repositories, allow_writes=False):
         super().__init__(repositories)
         self.allow_writes = allow_writes
@@ -62,100 +55,6 @@ class GitWorkspace(GitReader):
 
     def _git_dir(self, context):
         return context[0] / ".git"
-
-    def _context(self, repository):
-        root = self.check_repository(repository)
-        env = {key: value for key, value in os.environ.items() if key.upper() in
-               {"PATH", "SYSTEMROOT", "WINDIR", "TEMP", "TMP", "PATHEXT", "USERPROFILE", "HOME",
-                "APPDATA", "LOCALAPPDATA", "HOMEDRIVE", "HOMEPATH"}}
-        env.update(GIT_CONFIG_NOSYSTEM="1", GIT_CONFIG_GLOBAL=os.devnull, GIT_TERMINAL_PROMPT="0",
-                   GIT_OPTIONAL_LOCKS="0", GIT_PAGER="cat", GCM_INTERACTIVE="0")
-        prefix = [self.git, "--git-dir=" + str(self._git_dir((root,))), "--work-tree=" + str(root), "--no-pager",
-                  "-c", "core.fsmonitor=false", "-c", "core.quotePath=false", "-c", "color.ui=false",
-                  "-c", "core.bare=false", "-c", "core.hooksPath=" + os.devnull,
-                  "-c", "commit.gpgSign=false", "-c", "maintenance.auto=false", "-c", "gc.auto=0",
-                  "-c", "submodule.recurse=false", "-c", "diff.submodule=short"]
-        context = (root, env, prefix)
-        keys = self._query(context, ["config", "--local", "--no-includes", "--name-only", "--list"]).decode().lower().splitlines()
-        if any(key.startswith(("filter.", "include.", "includeif.", "extensions.worktreeconfig", "extensions.partialclone", "core.splitindex", "url."))
-               or (key.startswith("remote.") and key.endswith((".promisor", ".partialclonefilter")))
-               or (key.startswith("merge.") and key.endswith(".driver"))
-               or (key.startswith("diff.") and key.endswith(".command")) for key in keys):
-            raise GitError("git_configuration_denied", "仓库含过滤器、配置包含项、URL 重写或特殊索引配置，未执行。")
-        # Preserve trusted user EOL settings without loading their command hooks,
-        # filters, aliases or includes into repository operations.
-        global_env = dict(env)
-        global_env.pop("GIT_CONFIG_GLOBAL", None)
-        global_env.pop("GIT_CONFIG_NOSYSTEM", None)
-        code, values = self._invoke((root, global_env, [self.git]), ["config", "--no-includes", "--get-regexp",
-            r"^core\.(autocrlf|eol|safecrlf)$"], optional=True)
-        if code == 0:
-            for line in values.decode().splitlines():
-                key, _, value = line.partition(" ")
-                if key.lower() not in keys and value.lower() in {"true", "false", "input", "warn", "lf", "crlf", "native"}:
-                    prefix += ["-c", key + "=" + value]
-        return context
-
-    @staticmethod
-    def _invoke(context, args, *, optional=False, env_extra=None, network=False, timeout=None,
-                input_data=None, output_limit=2 * 1024 * 1024):
-        root, base_env, prefix = context
-        env = {**base_env, **(env_extra or {})}
-        if network:
-            for scheme, proxy in getproxies().items():
-                if scheme in {"http", "https", "all", "no"}:
-                    env[scheme.upper() + "_PROXY"] = proxy
-            if "SSH_AUTH_SOCK" in os.environ:
-                env["SSH_AUTH_SOCK"] = os.environ["SSH_AUTH_SOCK"]
-        with subprocess.Popen(prefix + args, cwd=root, env=env, stdin=subprocess.PIPE if input_data is not None else subprocess.DEVNULL,
-                stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
-                **({"creationflags": subprocess.CREATE_NO_WINDOW} if os.name == "nt" else {"start_new_session": True})) as process:
-            expired = threading.Event()
-            def stop():
-                expired.set()
-                terminate_tree(process)
-            timer = threading.Timer(timeout or (30 if network else 8), stop)
-            timer.daemon = True
-            timer.start()
-            writer = None
-            if input_data is not None:
-                def send():
-                    try:
-                        process.stdin.write(input_data)
-                    except (BrokenPipeError, OSError):
-                        pass
-                    finally:
-                        try:
-                            process.stdin.close()
-                        except (BrokenPipeError, OSError):
-                            pass
-                writer = threading.Thread(target=send, daemon=True)
-                writer.start()
-            output = bytearray()
-            try:
-                while chunk := process.stdout.read1(8192):
-                    output.extend(chunk)
-                    if len(output) > output_limit:
-                        stop()
-                        break
-                process.wait()
-                if writer is not None:
-                    writer.join(timeout=1)
-            finally:
-                timer.cancel()
-                terminate_tree(process)
-                process.wait()
-            if expired.is_set():
-                raise GitError("git_outcome_unknown", "Git 超时或输出过大；请先查询当前状态，不要自动重试写操作。")
-            if process.returncode and not optional:
-                text = bytes(output).lower()
-                reason = ("远程拒绝非快进推送，请先获取并检查分叉；不会强制覆盖。" if b"non-fast-forward" in text or b"fetch first" in text else
-                          "Git 操作未成功；请检查身份、凭据、网络或仓库状态。未自动回滚或重试。")
-                raise GitError("git_command_failed", reason)
-            return process.returncode, bytes(output)
-
-    def _query(self, context, args, **kwargs):
-        return self._invoke(context, args, **kwargs)[1]
 
     def _head(self, context):
         code, value = self._invoke(context, ["rev-parse", "--verify", "HEAD"], optional=True)

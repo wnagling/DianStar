@@ -12,7 +12,7 @@ from dianstar.security.command_policy import command_plan, ExecutableUnavailable
 from dianstar.security.content_guard import SecurityViolation
 from dianstar.security.gateway import ToolPreparationError
 from dianstar.hooks.workspace import WorkspaceAudit
-from dianstar.tools.mcp.servers.git.operations import GitError
+from dianstar.platform.git_queries import SafeGitQueries, GitError
 from dianstar.platform.shells import find_bash, find_powershell
 from dianstar.platform.command_environment import command_environment, environment_schema, profile_environment, BUILD_VARIABLES
 from dianstar.sessions.environments import EnvironmentProfileError
@@ -30,9 +30,8 @@ class CommandTools:
         plan = command_plan(argv, root, environment=environment)
         if plan["validation_kind"] == "git_diff_check":
             # Reuse the Git tool's configuration and executable restrictions.
-            from dianstar.tools.mcp.servers.git.workspace import GitWorkspace
             try:
-                workspace = GitWorkspace([root])
+                workspace = SafeGitQueries([root])
                 workspace.git = plan["argv"][0]
                 context = workspace._context(str(root))
             except (GitError, ValueError, OSError):
@@ -97,6 +96,7 @@ class CommandTools:
                 "shell": "powershell", "execution_mode": "shell", "command": command}
 
     def prepare(self, name, args):
+        self.context.projects.require(write=True)
         root = self.context.root(args)
         overrides = args.get("environment", {})
         environment_root = self.context.storage.manager.scratch_projects.get(str(root), root)
@@ -128,7 +128,7 @@ class CommandTools:
         root = self.context.root(args)
         audit = WorkspaceAudit(root, self.context.security, protected=(self.context.env_file,
             self.context.env_file.parent / ".local/config.json", self.context.env_file.parent / ".local/mcp.json",
-            self.context.env_file.parent / ".local/github_account.json"))
+            self.context.env_file.parent / ".local/github_account.json", self.context.env_file.parent / ".local/projects.json"))
         baseline = await blocking(lambda cancel: audit.capture())
         env = command_environment(self.context.security.scanner)
         if environment is not None:
@@ -167,7 +167,7 @@ class CommandTools:
 
     async def apply(self, action):
         item = self.prepared.pop(request_key(action.name, action.arguments), None)
-        if not item or time.monotonic() - item[0] > 600 or not self.context.mcp.authorization.active:
+        if not item or time.monotonic() - item[0] > 600 or not self.context.projects.authorization.active:
             return Observation(action, {"error": "workspace_not_prepared"})
         try:
             async with self.context.files.exclusive_operation(self.context.root(action.arguments)):
@@ -200,7 +200,7 @@ class CommandTools:
             return Observation(action, {"error": "workspace_operation_failed"})
 
     def registrations(self):
-        if not self.context.mcp.settings.git_enabled or not self.context.mcp.settings.workspace_write_enabled:
+        if not self.context.projects.settings.enabled or not self.context.projects.settings.write_enabled:
             return {}
         schema = {"type": "function", "function": {"name": "workspace_run", "description":
             "在项目中执行任务范围内的命令；常规验证按后台策略免额外确认，单纯提交推送不附加测试。",

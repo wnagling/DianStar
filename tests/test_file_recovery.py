@@ -22,7 +22,7 @@ from dianstar.security.authorization import Authorization
 from dianstar.security.file_locks import FileLocks, FileLockError, canonical
 from dianstar.security.gateway import ToolGateway
 from dianstar.security.tool_policy import ToolPolicy
-from dianstar.tools.local.workspace import WorkspaceTools
+from tests.project_fixtures import workspace_tools as WorkspaceTools
 
 
 class FileRecoveryTests(unittest.IsolatedAsyncioTestCase):
@@ -250,7 +250,7 @@ class FileRecoveryTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(result.returncode, 23, result.stderr)
         tools, _ = self.instance()
         registry = tools.registrations()
-        gateway = ToolGateway(tools.mcp.authorization, registry, AsyncMock(return_value=True),
+        gateway = ToolGateway(tools.projects.authorization, registry, AsyncMock(return_value=True),
                               policies={"workspace.write": ToolPolicy(enabled=False)})
         read = await self.call("read", gateway=gateway, path="a.txt")
         self.assertIn("after", read["content"])
@@ -258,7 +258,7 @@ class FileRecoveryTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual((self.root / "a.txt").read_text(), "after")
         self.assertEqual((await self.call("file_restore", gateway=gateway,
             transaction_id=read["recovery_pending"][0]["transaction_id"]))["error"], "tool_disabled")
-        gateway = ToolGateway(tools.mcp.authorization, registry, AsyncMock(return_value=True),
+        gateway = ToolGateway(tools.projects.authorization, registry, AsyncMock(return_value=True),
                               policies={"edit": ToolPolicy(enabled=False)})
         result = await self.call("file_batch", gateway=gateway, operations=[{"operation": "write", "path": "b.txt", "content": "new"}])
         self.assertEqual(result["error"], "tool_disabled")
@@ -284,7 +284,7 @@ from dianstar.config.mcp import MCPSettings
 from dianstar.core.types import ToolAction
 from dianstar.security.authorization import Authorization
 from dianstar.security.gateway import ToolGateway
-from dianstar.tools.local.workspace import WorkspaceTools
+from tests.project_fixtures import workspace_tools as WorkspaceTools
 root,env,label=Path(sys.argv[1]),Path(sys.argv[2]),sys.argv[3]
 auth=Authorization()
 tools=WorkspaceTools(SimpleNamespace(settings=MCPSettings(git_enabled=True,workspace_write_enabled=True),
@@ -353,7 +353,7 @@ from dianstar.config.mcp import MCPSettings
 from dianstar.core.types import ToolAction
 from dianstar.security.authorization import Authorization
 from dianstar.security.gateway import ToolGateway
-from dianstar.tools.local.workspace import WorkspaceTools
+from tests.project_fixtures import workspace_tools as WorkspaceTools
 from dianstar.tools.local.files.journal import FileJournal
 root,env,label=Path(sys.argv[1]),Path(sys.argv[2]),sys.argv[3]
 auth=Authorization()
@@ -431,7 +431,7 @@ from dianstar.config.mcp import MCPSettings
 from dianstar.core.types import ToolAction
 from dianstar.security.authorization import Authorization
 from dianstar.security.gateway import ToolGateway
-from dianstar.tools.local.workspace import WorkspaceTools
+from tests.project_fixtures import workspace_tools as WorkspaceTools
 root, env, mode = Path(sys.argv[1]), Path(sys.argv[2]), sys.argv[3]
 auth = Authorization()
 tools = WorkspaceTools(SimpleNamespace(settings=MCPSettings(git_enabled=True, workspace_write_enabled=True),

@@ -15,7 +15,7 @@ from dianstar.core.types import ToolAction
 from dianstar.security.authorization import Authorization
 from dianstar.security.gateway import ToolGateway
 from dianstar.security.tool_policy import ToolPolicy
-from dianstar.tools.local.workspace import WorkspaceTools
+from tests.project_fixtures import workspace_tools as WorkspaceTools
 from dianstar.tools.local.storage.tree import snapshot, same, StorageError
 from tests import test_file_tools as fixtures
 
@@ -262,7 +262,7 @@ from pathlib import Path
 from types import SimpleNamespace
 from dianstar.config.mcp import MCPSettings
 from dianstar.security.authorization import Authorization
-from dianstar.tools.local.workspace import WorkspaceTools
+from tests.project_fixtures import workspace_tools as WorkspaceTools
 from dianstar.tools.local.storage import trash
 root, env, first, second = map(Path, sys.argv[1:])
 mcp=SimpleNamespace(settings=MCPSettings(git_enabled=True, workspace_write_enabled=True), authorization=Authorization(), git=SimpleNamespace(repositories={str(root)}))
@@ -451,7 +451,7 @@ from pathlib import Path
 from types import SimpleNamespace
 from dianstar.config.mcp import MCPSettings
 from dianstar.security.authorization import Authorization
-from dianstar.tools.local.workspace import WorkspaceTools
+from tests.project_fixtures import workspace_tools as WorkspaceTools
 root, env = map(Path,sys.argv[1:])
 mcp=SimpleNamespace(settings=MCPSettings(git_enabled=True,workspace_write_enabled=True),authorization=Authorization(),git=SimpleNamespace(repositories={str(root)}))
 manager=WorkspaceTools(mcp,env,conversation_id="fixture-session").storage.manager

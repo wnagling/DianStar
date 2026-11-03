@@ -13,7 +13,7 @@ from dianstar.platform.command_environment import command_environment
 from dianstar.security.content_guard import ContentScanner
 from dianstar.core.types import ToolAction
 from dianstar.security.gateway import ToolGateway
-from dianstar.tools.local.workspace import WorkspaceTools
+from tests.project_fixtures import workspace_tools as WorkspaceTools
 from tests import test_bash_tools as fixtures
 
 

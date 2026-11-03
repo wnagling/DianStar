@@ -9,7 +9,7 @@ from dianstar.core.types import Observation
 from dianstar.security.authorization import request_key
 from dianstar.security.gateway import ToolPreparationError
 
-FIELDS = {"git_enabled", "git_write_enabled", "workspace_write_enabled", "git_repositories", "git_workspace_roots", "github_enabled",
+FIELDS = {"git_enabled", "git_write_enabled", "git_repositories", "git_workspace_roots", "github_enabled",
           "github_repositories", "github_write_repositories", "github_private_repositories", "github_admin_repositories"}
 
 def schema(name, properties):
@@ -50,7 +50,7 @@ def registrations(path, reconnect):
                 return Observation(action, {"success": True, "configuration_saved": True, "reconnected": False, "message": "配置已保存，重连失败，请查询 mcp_status。"})
         except (OSError, ValueError):
             return Observation(action, {"error": "mcp_configuration_save_failed"})
-    changes = {name: {"type": ["boolean", "null"]} if name in {"git_enabled", "github_enabled", "git_write_enabled", "workspace_write_enabled"}
+    changes = {name: {"type": ["boolean", "null"]} if name in {"git_enabled", "github_enabled", "git_write_enabled"}
                else {"type": ["array", "null"], "items": {"type": "string"}, "maxItems": 10}
                     if name in {"github_write_repositories", "github_admin_repositories"}
                else {"type": "boolean"} if name.endswith("enabled") else {"type": "array", "items": {"type": "string"}, "maxItems": 10}

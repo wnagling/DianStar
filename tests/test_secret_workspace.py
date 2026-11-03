@@ -13,7 +13,7 @@ from dianstar.core.types import ToolAction
 from dianstar.security.authorization import Authorization
 from dianstar.security.gateway import ToolGateway
 from dianstar.security.tool_policy import ToolPolicy
-from dianstar.tools.local.workspace import WorkspaceTools
+from tests.project_fixtures import workspace_tools as WorkspaceTools
 from dianstar.tools.mcp.client import MCPTools
 
 

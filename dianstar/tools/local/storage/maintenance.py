@@ -63,7 +63,7 @@ class MaintenanceMixin:
                 raise StorageError("scratch_scope_denied", "不能管理其他会话的临时目录。")
             # The project may currently be recycled. Its configured scope must
             # still contain the path, even though the directory can be absent.
-            if Path(record["project"]) not in {Path(root) for root in self.context.mcp.git.repositories}:
+            if Path(record["project"]) not in {Path(root) for root in self.context.projects.roots}:
                 raise StorageError("storage_scope_denied", "临时目录的原项目不在当前允许范围。")
 
     def plan_purge(self, identifiers, cancel=None, *, expired=False):

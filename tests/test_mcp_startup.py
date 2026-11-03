@@ -216,7 +216,8 @@ class AutomaticRuntimeTests(unittest.IsolatedAsyncioTestCase):
             history = []
             await run_turn("检查连接", env_file=self.env, project_directory=self.repo, history=history)
             names = {t["function"]["name"] for t in create.await_args_list[0].kwargs["tools"]}
-        self.assertFalse(any(n.startswith(("mcp_git__", "workspace_")) for n in names))
+        self.assertFalse(any(n.startswith("mcp_git__") for n in names))
+        self.assertTrue({"read", "write", "shell", "workspace_run"} <= names)
         result = next(json.loads(m["content"]) for m in history if m["role"] == "tool")
         self.assertEqual(result["servers"]["git"]["state"], "disabled")
 
@@ -258,7 +259,9 @@ class AutomaticRuntimeTests(unittest.IsolatedAsyncioTestCase):
             history = []
             await run_turn("检查连接", env_file=self.env, project_directory=self.repo, history=history)
             names = {t["function"]["name"] for t in create.await_args_list[0].kwargs["tools"]}
-        self.assertFalse(any(n.startswith(("mcp_git__", "workspace_")) for n in names))
+        self.assertFalse(any(n.startswith("mcp_git__") for n in names))
+        self.assertIn("read", names)
+        self.assertFalse({"edit", "write", "shell", "workspace_run"} & names)
         result = next(json.loads(m["content"]) for m in history if m["role"] == "tool")
         self.assertEqual(result["servers"]["configuration"]["state"], "invalid")
         self.assertEqual(path.read_text(), "{broken")

@@ -21,6 +21,7 @@ class EnvironmentInspection:
 
     async def inspect(self, action):
         try:
+            self.context.projects.require(write=True)
             root = self.context.root(action.arguments)
             async with self.context.files.exclusive_operation(root):
                 return await self._inspect(action)
@@ -74,7 +75,7 @@ class EnvironmentInspection:
         return Observation(action, result)
 
     def registrations(self):
-        if not self.context.mcp.settings.git_enabled or not self.context.mcp.settings.workspace_write_enabled:
+        if not self.context.projects.settings.enabled or not self.context.projects.settings.write_enabled:
             return {}
         schema = {"type": "function", "function": {"name": "workspace_environment_inspect", "description":
             "一次检查本机原生工具链的 PATH、有限常见位置与版本，并返回可见包管理器。环境诊断优先使用，避免多轮 shell 枚举；不检查 WSL、不安装软件。",

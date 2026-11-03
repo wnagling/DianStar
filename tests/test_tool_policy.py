@@ -107,7 +107,7 @@ class RuntimeToolPolicyTests(unittest.IsolatedAsyncioTestCase):
             env = root / ".env"
             env.write_text("DEEPSEEK_API_KEY=fixture-model-key\n")
             create = factory.return_value.chat.completions.create = AsyncMock(side_effect=[
-                call("configure_mcp", {"changes": {"git_enabled": None, "workspace_write_enabled": True}}),
+                call("configure_mcp", {"changes": {"git_enabled": None}}),
                 call("read", {"repository": str(root), "path": "README.md"}), call("mcp_status", {}), reply("已读取。")])
             history = []
             approval = AsyncMock(return_value=True)

@@ -1,5 +1,7 @@
 # MCP 接入与 Git 工程操作
 
+文件、Shell、开发环境、恢复和回收站是独立本地工具，不属于 Git MCP 服务，关闭 Git/GitHub 不会一并关闭它们。普通目录由 open_project 接入，创建目录可用 create=true，不自动 git init；ToolGateway、Hook 与系统隔离照常执行。连接重建保留本地工具状态。
+
 返回 [项目首页](../README.md)。
 
 DianStar 内部通过 MCP 连接本地 stdio 服务。当前接入内置 Git 工程服务和应用管理的 GitHub 官方连接组件；GitHub 支持仓库搜索、PR、Issue、CI 与代码审查。暂不支持任意服务器、HTTP 传输、MCP prompts/resources 或服务器请求模型采样。
@@ -16,7 +18,7 @@ GitHub 身份认证是独立前提：通过 `/github` 或设置中的“GitHub �
 
 .local/mcp.json 继续兼容已有仓库、目标目录、组件覆盖和模式策略，普通用户不需要编辑。自动识别当前项目与 GitHub origin，不把整个父目录或全账号仓库纳入范围。enabled 与 requires_approval 两项后台工具策略继续有效，默认修改动作逐次确认；未来只读/全权限模式接口保持不变。
 
-已明确限制的仓库范围、私有内容范围和账号权限检查继续有效。普通任务只提供具体的 open_project 项目打开能力，不提供 get_mcp_configuration/configure_mcp；内部配置工具仅可由可信后端显式注册。本轮直接要求操作某个绝对路径项目时，open_project 可在默认策略下临时切换，不增加确认、不写长期配置；带空格路径使用引号。其他项目、长期记住或后台强制审批时仍确认项目名、完整路径和关联主项目，再记住路径并重连工具。两种流程都保留原后台策略，不把打开项目当作提交、推送或其他写操作授权。当前项目无需重复打开。连接随提问自动建立与释放，mcp_status 供 Agent 内部诊断实际生效范围，不用静态配置列表误判当前项目不可用。
+已明确限制的仓库范围、私有内容范围和账号权限检查继续有效。普通任务只提供具体的 open_project 项目打开能力，不提供 get_mcp_configuration/configure_mcp；内部配置工具仅可由可信后端显式注册。本轮直接要求操作某个绝对路径项目时，open_project 可在默认策略下临时切换，不增加确认、不写长期配置；带空格路径使用引号。其他项目、长期记住或后台强制审批时仍确认项目名和完整路径，再记入独立的 .local/projects.json；按需刷新可选 Git/GitHub 连接。两种流程都保留原后台策略，不把打开项目当作提交、推送或其他写操作授权。当前项目无需重复打开。连接随提问自动建立与释放，mcp_status 供 Agent 内部诊断实际生效范围，不用静态配置列表误判当前项目不可用。
 
 固定 Windows 组件路径为 .local/tools/github-mcp-server/v2.0.3/github-mcp-server.exe，SHA256 为 647fe7e7f3c1296d1acb936b5c7704bbcdb6bda95b4533c524157446b33f0f16。源码安装的组件依赖由安装维护流程准备，打包脚本会核验并随包复制，不携带制作者账号或配置。
 
@@ -108,7 +110,7 @@ Git 工程能力与仓库管理已扩展，完整参数分组和验收见 [Git �
 
 ## Git 工程工具与日常接入
 
-git_workspace_roots 可限制创建仓库/worktree 的父目录；默认策略下未配置此范围时，clone/init/worktree 可确认具体目标，父目录必须已存在，禁止网络共享或链接。确认只对应本次目标，不信任父目录中的其他仓库。workspace_write_enabled 缺省/null 默认可申请，常规 Python 测试自动执行，其他修改按具体操作确认，false 可禁止文件编辑、单文件删除和命令；github_admin_repositories 缺省/null 使用当前项目，自定义列表必须属于 github_repositories，空列表禁止管理。github_use_git_credentials 仅控制旧 Git 凭据后备，缺省不启用；专用登录优先，退出状态阻止全部后备来源。
+git_workspace_roots 可限制创建仓库/worktree 的父目录；默认策略下未配置此范围时，clone/init/worktree 可确认具体目标，父目录必须已存在，禁止网络共享或链接。确认只对应本次目标，不信任父目录中的其他仓库。workspace_write_enabled 只保留旧配置读取迁移：尚无 .local/projects.json 时，其明确 false 会保留为本地只读，不能因本次整理丢失；已存在独立配置后由 projects.json 的 enabled/write_enabled 管理本地能力，configure_mcp 不再提供该字段。常规验证可免额外确认，但单纯提交推送不自动跑测试；github_admin_repositories 缺省/null 使用当前项目，自定义列表必须属于 github_repositories，空列表禁止管理。github_use_git_credentials 仅控制旧 Git 凭据后备，缺省不启用；专用登录优先，退出状态阻止全部后备来源。
 
 | 工具组 | 行为 |
 | --- | --- |

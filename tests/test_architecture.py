@@ -8,6 +8,28 @@ import unittest
 
 
 class ArchitectureTests(unittest.TestCase):
+    def test_local_project_tools_do_not_import_mcp_app_or_ui(self):
+        self.run_isolated('''
+import importlib.abc, sys, tempfile
+from pathlib import Path
+class NoTransport(importlib.abc.MetaPathFinder):
+    def find_spec(self, fullname, path=None, target=None):
+        if fullname.split(".")[0] in {"mcp", "textual"} or fullname.startswith(("dianstar.tools.mcp", "dianstar.app", "dianstar.ui")):
+            raise ImportError("Local project tools cannot depend on MCP, app or UI")
+sys.meta_path.insert(0, NoTransport())
+from dianstar.security.authorization import Authorization
+from dianstar.tools.local.project_context import ProjectContext
+from dianstar.tools.local.workspace import WorkspaceTools
+with tempfile.TemporaryDirectory() as name:
+    root = Path(name).resolve()
+    tools = WorkspaceTools(ProjectContext(Authorization(), roots=(root,)), root / "unused.env")
+    try:
+        assert {"read", "write", "glob", "grep", "edit", "move", "patch", "workspace_run"} <= tools.registrations().keys()
+        assert not (root / ".git").exists()
+    finally:
+        tools.storage.manager.close()
+''')
+
     def run_isolated(self, source):
         result = subprocess.run([sys.executable, "-c", source], capture_output=True,
                                 text=True, encoding="utf-8", timeout=30,

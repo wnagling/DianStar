@@ -11,7 +11,7 @@ from dianstar.core.types import ToolAction
 from dianstar.security.host_commands import inspect_command
 from dianstar.security.system_paths import HostSafetyError, check_host_path
 from dianstar.tools.local.process_runner import run_process
-from dianstar.tools.local.workspace import WorkspaceTools
+from tests.project_fixtures import workspace_tools as WorkspaceTools
 from dianstar.security.gateway import ToolGateway
 from dianstar.security.content_guard import ContentScanner
 from dianstar.platform.command_environment import command_environment

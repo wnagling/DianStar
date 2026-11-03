@@ -14,21 +14,21 @@ from dianstar.security.system_paths import check_host_path
 
 
 class WorkspaceTools:
-    def __init__(self, mcp, env_file, *, conversation_id=None, task_scope=None, storage_manager=None):
-        self.mcp, self.env_file = mcp, env_file
+    def __init__(self, projects, env_file, *, conversation_id=None, task_scope=None, storage_manager=None):
+        self.projects, self.env_file = projects, env_file
         self.task_scope = task_scope
-        github = getattr(mcp, "github", None)
         self.security = HookRunner(ContentScanner(known=known_credentials(env_file,
-            extra=(github.token(),) if github else ())))
+            extra=projects.credentials())))
         self.files = FileRecovery(self)
         self.environments = EnvironmentTools(self, conversation_id)
         self.storage = StorageTools(self, storage_manager)
 
     def root(self, args):
+        self.projects.require()
         root = Path(args["repository"])
         check_host_path(root, project=True, managed=str(root) in self.storage.manager.scratch_roots)
-        if (not self.mcp.settings.git_enabled or not root.is_absolute() or str(root).startswith(("\\\\", "//"))
-                or root not in {Path(value) for value in (*self.mcp.git.repositories, *self.storage.manager.scratch_roots)} or not root.is_dir()
+        if (not root.is_absolute() or str(root).startswith(("\\\\", "//"))
+                or root not in {Path(value) for value in (*self.projects.roots, *self.storage.manager.scratch_roots)} or not root.is_dir()
                 or root.resolve(strict=True) != root.absolute()):
             raise ValueError("Repository not enabled")
         return root
@@ -60,9 +60,7 @@ class WorkspaceTools:
 
     def mask(self, value):
         values = list(dotenv_values(self.env_file).values()) if self.env_file.is_file() else []
-        github = getattr(self.mcp, "github", None)
-        if github:
-            values.append(github.token())
+        values.extend(self.projects.credentials())
         values += [value for key, value in os.environ.items() if any(x in key.upper() for x in ("TOKEN", "API_KEY", "PASSWORD"))]
         for secret in values:
             if secret and len(secret) >= 8:
@@ -73,9 +71,11 @@ class WorkspaceTools:
         return {**FileTools(self).registrations(), **CommandTools(self).registrations(),
                 **self.environments.registrations(), **EnvironmentInspection(self).registrations(), **self.storage.registrations()}
 
+    def refresh_credentials(self):
+        self.security.scanner = ContentScanner(known=known_credentials(self.env_file, extra=self.projects.credentials()))
+
     def mask_file(self, text, path):
-        github = getattr(self.mcp, "github", None)
-        scanner = ContentScanner(known=known_credentials(self.env_file, extra=(github.token(),) if github else ()))
+        scanner = ContentScanner(known=known_credentials(self.env_file, extra=self.projects.credentials()))
         name = Path(path).name.lower()
         env_style = name.startswith(".env") or name.endswith(".env") or Path(path).suffix.lower() in {".ini", ".cfg", ".toml", ".yaml", ".yml"}
         safe = scanner.redact(text, env_style=env_style, preserve_lines=True)

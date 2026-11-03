@@ -14,7 +14,7 @@ from dianstar.security.authorization import Authorization
 from dianstar.security.content_guard import ContentScanner, Finding, SecurityViolation
 from dianstar.security.gateway import ToolGateway
 from dianstar.security.tool_policy import ToolPolicy
-from dianstar.tools.local.workspace import WorkspaceTools
+from tests.project_fixtures import workspace_tools as WorkspaceTools
 
 
 class HookRegistryTests(unittest.TestCase):

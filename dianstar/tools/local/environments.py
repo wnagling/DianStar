@@ -41,6 +41,7 @@ class EnvironmentTools:
         return profile
 
     def prepare(self, name, args):
+        self.context.projects.require(write=True)
         root = self.context.root(args)
         previous = self.store.load(root)
         if previous["revision"] != args["expected_revision"]:
@@ -88,7 +89,7 @@ class EnvironmentTools:
 
     async def apply(self, action):
         item = self.prepared.pop(request_key(action.name, action.arguments), None)
-        if not item or time.monotonic() - item[0] > 600 or not self.context.mcp.authorization.active:
+        if not item or time.monotonic() - item[0] > 600 or not self.context.projects.authorization.active:
             return Observation(action, {"error": "workspace_not_prepared"})
         try:
             def save(cancel):
@@ -96,7 +97,7 @@ class EnvironmentTools:
                 # Same OS repository gate as commands, before the short DB
                 # lock. Never upgrade a shared lock or hold one over approval.
                 with self.context.files.locks.repository(root, cancel=cancel):
-                    if cancel.is_set() or not self.context.mcp.authorization.active:
+                    if cancel.is_set() or not self.context.projects.authorization.active:
                         raise EnvironmentProfileError("authorization_expired", "操作已取消，未保存环境。")
                     current = self.prepare(action.name, action.arguments)
                     if current != item[1]:
@@ -110,7 +111,7 @@ class EnvironmentTools:
         return Observation(action, result)
 
     def registrations(self):
-        if not self.context.mcp.settings.git_enabled or not self.store.conversation_id:
+        if not self.context.projects.settings.enabled or not self.store.conversation_id:
             return {}
         definitions = {
             "workspace_environment_get": ("查询当前会话在这个项目中保存的开发环境与版本；不读取完整宿主环境。", {}),
@@ -124,7 +125,7 @@ class EnvironmentTools:
         result = {}
         for name, (description, properties) in definitions.items():
             mutation = name != "workspace_environment_get"
-            if mutation and not self.context.mcp.settings.workspace_write_enabled:
+            if mutation and not self.context.projects.settings.write_enabled:
                 continue
             properties = {"repository": {"type": "string", "minLength": 1}, **properties}
             schema = {"type": "function", "function": {"name": name, "description": description, "parameters": {

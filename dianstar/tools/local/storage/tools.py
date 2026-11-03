@@ -122,6 +122,7 @@ class StorageTools:
     async def preview(self, full_name, args):
         name = full_name.removeprefix(PREFIX)
         try:
+            self.context.projects.require(write=True)
             def prepare(cancel):
                 paths, managed = self.roots(name, args)
                 with self.manager.mutation(paths, cancel, managed, check_ready=name != "scratch_open"):
@@ -140,9 +141,10 @@ class StorageTools:
             return Observation(action, {"error": "storage_not_prepared", "message": "操作计划已失效，请重新查询。"})
         try:
             def execute(cancel):
+                self.context.projects.require(write=True)
                 paths, managed = self.roots(name, args)
                 with self.manager.mutation(paths, cancel, managed, check_ready=name != "scratch_open"):
-                    if cancel.is_set() or not self.context.mcp.authorization.active:
+                    if cancel.is_set() or not self.context.projects.authorization.active:
                         raise StorageError("storage_cancelled", "操作已取消，未继续。")
                     current = self.plan(name, args, cancel)
                     if current != saved[1]:
@@ -170,6 +172,7 @@ class StorageTools:
 
     async def query(self, action):
         try:
+            self.context.projects.require()
             function = self.manager.list_trash if action.name == PREFIX + "trash_list" else self.manager.list_scratch
             result = await blocking(lambda cancel: function(action.arguments.get("limit", 20)))
         except (ValueError, OSError, sqlite3.Error) as error:
@@ -177,7 +180,7 @@ class StorageTools:
         return Observation(action, result)
 
     def registrations(self):
-        if not self.context.mcp.settings.git_enabled:
+        if not self.context.projects.settings.enabled:
             return {}
         identifier = {"type": "string", "pattern": "^[a-f0-9]{32}$"}
         path = {"type": "string", "minLength": 1, "description": "明确的本机绝对路径，不支持通配符。"}
@@ -196,7 +199,7 @@ class StorageTools:
         result = {}
         for name, (description, properties, required) in definitions.items():
             query = name in {"trash_list", "scratch_list"}
-            if not query and not self.context.mcp.settings.workspace_write_enabled:
+            if not query and not self.context.projects.settings.write_enabled:
                 continue
             full_name = PREFIX + name
             schema = {"type": "function", "function": {"name": full_name, "description": description,

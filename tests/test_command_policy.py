@@ -15,7 +15,7 @@ from dianstar.security.authorization import Authorization
 from dianstar.security.command_policy import command_plan, routine_validation
 from dianstar.security.gateway import ToolGateway
 from dianstar.security.tool_policy import ToolPolicy
-from dianstar.tools.local.workspace import WorkspaceTools
+from tests.project_fixtures import workspace_tools as WorkspaceTools
 from tests.test_permissions import call, reply, with_review, workflow_results
 from tests.test_mcp_startup import git
 

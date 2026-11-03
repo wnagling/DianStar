@@ -42,6 +42,7 @@ class StorageBase:
         return path
 
     def scope(self, value):
+        self.context.projects.require()
         path = self.checked(value)
         check_host_path(path)
         for protected in (self.directory, self.context.env_file):
@@ -53,14 +54,14 @@ class StorageBase:
         for variable in ("SYSTEMROOT", "WINDIR", "ProgramFiles", "ProgramFiles(x86)"):
             if os.environ.get(variable) and path.is_relative_to(Path(os.environ[variable])):
                 raise StorageError("storage_path_denied", "系统及程序安装目录不在回收范围。")
-        roots = sorted((Path(root) for root in self.context.mcp.git.repositories if path.is_relative_to(Path(root))), key=lambda item: len(item.parts))
-        configured = [Path(root) for root in self.context.mcp.settings.git_workspace_roots]
-        if not roots and not any(path != root and path.is_relative_to(root) for root in configured) and not getattr(self.context.mcp, "allow_clone", False):
+        roots = sorted((Path(root) for root in self.context.projects.roots if path.is_relative_to(Path(root))), key=lambda item: len(item.parts))
+        configured = [Path(root) for root in self.context.projects.settings.workspace_roots]
+        if not roots and not any(path != root and path.is_relative_to(root) for root in configured) and (configured or not self.context.projects.settings.allow_external_paths):
             raise StorageError("storage_scope_denied", "目标不在当前后台允许的项目或工作目录范围。")
         return path, roots[0] if roots else path
 
     def label(self, path):
-        roots = [Path(root) for root in self.context.mcp.git.repositories if path.is_relative_to(Path(root)) and path != Path(root)]
+        roots = [Path(root) for root in self.context.projects.roots if path.is_relative_to(Path(root)) and path != Path(root)]
         return path.relative_to(min(roots, key=lambda item: len(item.parts))).as_posix() if roots else path.name
 
     def hook(self, event, path, values):

@@ -12,7 +12,7 @@ from .tree import StorageError, identity, snapshot
 class ScratchMixin:
     def conversation(self):
         value = self.context.environments.store.conversation_id
-        return value or "request:" + self.context.mcp.authorization.request_id
+        return value or "request:" + self.context.projects.authorization.request_id
 
     def live(self, identifier):
         if identifier in self.leases:
@@ -41,7 +41,7 @@ class ScratchMixin:
             raise StorageError("scratch_in_use", "临时工作区正被另一任务使用，可为本任务创建新的临时工作区。") from None
         try:
             directory = self.scratch_path(record)
-            record.update(status="active", owner=self.context.mcp.authorization.request_id,
+            record.update(status="active", owner=self.context.projects.authorization.request_id,
                           conversation=self.conversation(), expires=None)
             self.journal.save(record)
             self.leases[record["id"]] = lease
@@ -62,7 +62,7 @@ class ScratchMixin:
         self.context.security.run("before_scratch", [("scratch", str(project).encode())])
         record = self.new_record(uuid.uuid4().hex, "scratch")
         session = hashlib.sha256(self.conversation().encode()).hexdigest()[:24]
-        path = self.directory / "tmp" / session / self.context.mcp.authorization.request_id / record["id"]
+        path = self.directory / "tmp" / session / self.context.projects.authorization.request_id / record["id"]
         private_directory(path)
         record.update(directory=str(path), project=str(project), conversation=self.conversation(), identity=identity(path))
         self.journal.save(record)

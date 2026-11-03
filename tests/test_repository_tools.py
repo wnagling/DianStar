@@ -15,7 +15,7 @@ from dianstar.core.types import ToolAction
 from dianstar.security.authorization import Authorization
 from dianstar.security.gateway import ToolGateway
 from dianstar.tools.local.github_admin import GitHubAdmin
-from dianstar.tools.local.workspace import WorkspaceTools
+from tests.project_fixtures import workspace_tools as WorkspaceTools
 from dianstar.app.runtime import run_turn
 
 
@@ -126,7 +126,7 @@ class WorkspaceToolTests(unittest.IsolatedAsyncioTestCase):
         self.assertFalse(marker.exists())
 
     async def test_read_only_configuration_does_not_expose_edit_or_command(self):
-        self.mcp.settings = replace(self.mcp.settings, workspace_write_enabled=False)
+        self.tools.projects.settings = replace(self.tools.projects.settings, write_enabled=False)
         names = self.tools.registrations()
         self.assertIn('read', names)
         self.assertNotIn('edit', names)

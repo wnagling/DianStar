@@ -21,7 +21,7 @@ from dianstar.security.content_guard import Finding
 from dianstar.security.gateway import ToolGateway
 from dianstar.security.tool_policy import ToolPolicy
 from dianstar.tools.local.files import migrate_file_policies
-from dianstar.tools.local.workspace import WorkspaceTools
+from tests.project_fixtures import workspace_tools as WorkspaceTools
 
 
 class FileToolTests(unittest.IsolatedAsyncioTestCase):
