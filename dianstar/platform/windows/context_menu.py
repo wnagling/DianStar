@@ -5,11 +5,10 @@ import asyncio
 import ctypes
 from ctypes import wintypes
 import json
-import os
-from pathlib import Path
 from importlib.resources import files
 import subprocess
 from typing import Literal
+from dianstar.platform.shells import find_powershell
 
 
 def cursor_position() -> tuple[int, int]:
@@ -34,8 +33,7 @@ class WindowsCopyMenuClient:
         if self._process is not None and self._process.returncode is None:
             return
         script = files("dianstar").joinpath("assets", "copy_menu.ps1").read_text(encoding="utf-8")
-        powershell = (Path(os.environ.get("SystemRoot", r"C:\Windows"))
-                      / "System32/WindowsPowerShell/v1.0/powershell.exe")
+        powershell = find_powershell()
         self._process = await asyncio.create_subprocess_exec(
             str(powershell), "-NoLogo", "-NoProfile", "-NonInteractive", "-STA",
             "-EncodedCommand", base64.b64encode(script.encode("utf-16le")).decode("ascii"),

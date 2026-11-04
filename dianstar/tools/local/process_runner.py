@@ -78,8 +78,11 @@ async def _run_process(argv, root, environment, timeout, *, launch_input=None):
 
     output, exceeded, timed_out = bytearray(), False, False
     async def drain():
-        while await process.stdout.read(8192):
-            pass
+        nonlocal exceeded
+        while data := await process.stdout.read(8192):
+            remaining = max(0, MAX_OUTPUT-len(output))
+            output.extend(data[:remaining])
+            exceeded |= len(data)>remaining
     async def read():
         nonlocal exceeded
         while data := await process.stdout.read(8192):

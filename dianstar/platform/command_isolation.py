@@ -194,6 +194,7 @@ class WindowsWriteScope:
             raise
 
     def launch(self, argv, environment, *, network=False):
+        from .shells import is_powershell_runtime
         environment = dict(environment)
         # GetTempPath2 may redirect TEMP to the packaged directory prepared in
         # start(). All grants stay within this command's private work tree.
@@ -206,7 +207,7 @@ class WindowsWriteScope:
         self.launch_nonce = uuid.uuid4().hex
         config = {"sid": self.sid, "desktop": "DianStar-" + self.identifier, "root": str(self.root),
             "read_sid": self.read_sid,
-            "powershell_runtime": Path(argv[0]).resolve() == Path(os.environ["SYSTEMROOT"], "System32/WindowsPowerShell/v1.0/powershell.exe").resolve(),
+            "powershell_runtime": is_powershell_runtime(argv[0]),
             "argv": list(map(str, argv)), "environment": environment, "network": network, "nonce": self.launch_nonce}
         return [sys.executable, "-I", "-S", "-c", api_source + "\n" + worker], json.dumps(config, ensure_ascii=False).encode()
 

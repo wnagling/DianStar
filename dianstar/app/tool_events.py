@@ -80,7 +80,7 @@ class ToolEvents:
         elif error in {"authorization_required", "authorization_denied", "authorization_expired", "authorization_changed",
                        "tool_disabled", "tool_not_authorized", "invalid_tool_arguments", "host_path_denied", "dangerous_command_denied",
                        "command_isolation_unavailable", "command_runtime_inaccessible", "shell_incompatible_with_isolation",
-                       "local_project_disabled", "local_project_readonly"}:
+                       "local_project_disabled", "local_project_readonly", "powershell_arguments_unsupported", "powershell7_unavailable"}:
             status = "not_executed"
         review = result.get("security_review", {})
         if status == "success" and (result.get("isolation_cleanup_pending") or isinstance(review, dict) and (review.get("complete") is False or review.get("findings"))):

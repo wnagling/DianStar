@@ -1,13 +1,11 @@
 """Windows 系统剪贴板写入，文本通过标准输入传递，不拼接为命令。"""
 
-import os
-from pathlib import Path
 import subprocess
+from dianstar.platform.shells import find_powershell
 
 
 def copy_windows_text(text: str) -> None:
-    powershell = (Path(os.environ.get("SystemRoot", r"C:\Windows"))
-                  / "System32/WindowsPowerShell/v1.0/powershell.exe")
+    powershell = find_powershell()
     subprocess.run(
         [str(powershell), "-NoLogo", "-NoProfile", "-NonInteractive", "-Command",
          "$ErrorActionPreference='Stop'; "

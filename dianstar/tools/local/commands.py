@@ -13,7 +13,8 @@ from dianstar.security.content_guard import SecurityViolation
 from dianstar.security.gateway import ToolPreparationError
 from dianstar.hooks.workspace import WorkspaceAudit
 from dianstar.platform.git_queries import SafeGitQueries, GitError
-from dianstar.platform.shells import find_bash, find_powershell
+from dianstar.platform.shells import find_bash, find_powershell, PowerShellUnavailable
+from dianstar.platform.powershell import powershell_argv, command_from_argv
 from dianstar.platform.command_environment import command_environment, environment_schema, profile_environment, BUILD_VARIABLES
 from dianstar.sessions.environments import EnvironmentProfileError
 from dianstar.platform.toolchains import routine_version
@@ -27,7 +28,18 @@ class CommandTools:
 
     def prepare_command(self, argv, root, *, environment=None):
         self.context.security.run("before_command", [("command", json.dumps(argv, ensure_ascii=False).encode())])
+        if os.name == 'nt' and argv[0].casefold() in {'pwsh','pwsh.exe','powershell','powershell.exe'}:
+            argv=[str(find_powershell()),*argv[1:]]
         plan = command_plan(argv, root, environment=environment)
+        if os.name == "nt" and Path(plan["argv"][0]).name.casefold() in {"powershell", "powershell.exe", "pwsh", "pwsh.exe"}:
+            try:
+                command = command_from_argv(plan["argv"])
+            except ValueError:
+                raise ToolPreparationError("powershell_arguments_unsupported",
+                    "未执行：仅支持已安装 PowerShell 7 的 -Command 单一脚本文本，不支持 -File 文件启动、交互、编码命令或其他运行时选项；不会关闭系统策略或隔离。") from None
+            self.context.security.run("before_command", [("powershell", command.encode())])
+            plan = command_plan(powershell_argv(command, root), root, environment=environment)
+            plan.update(shell="powershell", execution_mode="shell", command=command)
         if plan["validation_kind"] == "git_diff_check":
             # Reuse the Git tool's configuration and executable restrictions.
             try:
@@ -87,12 +99,7 @@ class CommandTools:
                 raise
             except ValueError:
                 pass
-        executable = find_powershell()
-        # External programs must check their own exit status in the script;
-        # terminating PowerShell errors always stop this foreground command.
-        location = str(root).replace("'", "''")
-        script = "$ErrorActionPreference='Stop'; $ProgressPreference='SilentlyContinue'; New-PSDrive -Name DSWork -PSProvider FileSystem -Root '" + location + "' | Out-Null; Set-Location -LiteralPath 'DSWork:\\'; & { " + command + " } | Out-String -Width 240; if (-not $?) { exit 1 }; if ($null -ne $LASTEXITCODE) { exit $LASTEXITCODE }"
-        return {**command_plan([str(executable), "-NoLogo", "-NoProfile", "-NonInteractive", "-OutputFormat", "XML", "-Command", script], root, environment=environment),
+        return {**command_plan(powershell_argv(command, root), root, environment=environment),
                 "shell": "powershell", "execution_mode": "shell", "command": command}
 
     def prepare(self, name, args):
@@ -137,7 +144,7 @@ class CommandTools:
         result = await run_process(args["argv"], root, env, args.get("timeout_seconds", 120), protected=audit.protected,
             network=args.get("network", False), managed=str(root) in self.context.storage.manager.scratch_roots, scanner=self.context.security.scanner)
         output = result.pop("output")
-        if "-OutputFormat" in args["argv"] and Path(args["argv"][0]).name.casefold() == "powershell.exe":
+        if "-OutputFormat" in args["argv"] and Path(args["argv"][0]).name.casefold() in {"powershell.exe","pwsh.exe"}:
             from dianstar.platform.powershell_output import decode_output
             content = self.context.mask(decode_output(output))
         else:
@@ -162,6 +169,8 @@ class CommandTools:
             raise ToolPreparationError(error.code, error.message) from None
         except ExecutableUnavailable:
             raise ToolPreparationError("executable_not_found", "本次命令环境无法定位程序；不等于未安装，请检查绝对路径、PATH 或环境激活。") from None
+        except PowerShellUnavailable:
+            raise ToolPreparationError("powershell7_unavailable", "未找到独立安装的 PowerShell 7，请按 README 安装后重试；不会退回 5.1 或无限制执行。") from None
         except (ValueError, OSError):
             raise ToolPreparationError("workspace_preparation_failed", "命令或执行环境检查未通过。") from None
 
@@ -184,7 +193,7 @@ class CommandTools:
                 result["environment_override_names"] = sorted(action.arguments.get("environment", {}))
                 if item[1]["requested_task_command"]:
                     result["execution_kind"] = "go_" + item[1]["argv"][1]
-                if action.name in {"bash", "shell"}:
+                if "shell" in item[1]:
                     result.update(requested_shell=item[1]["shell"], shell=item[1]["shell"] if item[1]["execution_mode"] == "shell" else None,
                                   execution_mode=item[1]["execution_mode"])
                 return Observation(action, result)
@@ -196,6 +205,8 @@ class CommandTools:
             return Observation(action, error.result)
         except ExecutableUnavailable:
             return Observation(action, {"error": "workspace_command_changed", "message": "确认后程序或环境已变化，未执行，请重新核对。"})
+        except PowerShellUnavailable:
+            return Observation(action, {"error":"powershell7_unavailable","message":"PowerShell 7 在确认后不可用，未执行；请恢复安装后重试。"})
         except (ValueError, OSError):
             return Observation(action, {"error": "workspace_operation_failed"})
 
@@ -203,7 +214,8 @@ class CommandTools:
         if not self.context.projects.settings.enabled or not self.context.projects.settings.write_enabled:
             return {}
         schema = {"type": "function", "function": {"name": "workspace_run", "description":
-            "在项目中执行任务范围内的命令；常规验证按后台策略免额外确认，单纯提交推送不附加测试。",
+            "在项目中执行任务范围内的命令；常规验证按后台策略免额外确认，单纯提交推送不附加测试。"
+            "Windows PowerShell 7的-Command单一脚本文本与shell统一处理目录和输出；仅支持NoLogo/NoProfile/NonInteractive和OutputFormat选项，不支持-File、交互或编码启动。",
             "parameters": {"type": "object", "properties": {"repository": {"type": "string"},
                 "argv": {"type": "array", "items": {"type": "string"}, "minItems": 1, "maxItems": 100},
                 "timeout_seconds": {"type": "integer", "minimum": 1, "maximum": 600}, "environment": environment_schema(),
@@ -222,7 +234,7 @@ class CommandTools:
                 "required": ["repository", "command"], "additionalProperties": False}}}
         result = {}
         shell = {"type": "function", "function": {"name": "shell", "description":
-            "在 Windows 项目中运行受应用容器隔离的非交互 PowerShell 命令。不是 Bash，请使用 PowerShell 语法。"
+            "在 Windows 项目中运行受应用容器隔离的非交互 PowerShell 7 命令，请使用PowerShell 7语法和对应的.NET API。"
             "只允许写当前项目及专用临时目录，既有敏感配置和 Git 元数据禁止命令写入；默认不能联网。"
             "简单程序调用优先 workspace_run，文件读写优先专用工具。执行前仍按后台策略确认；没有无限制运行后备。",
             "parameters": bash["function"]["parameters"]}}

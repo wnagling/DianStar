@@ -14,6 +14,15 @@ python -m venv .venv
 .\.venv\Scripts\python.exe -m dianstar
 ```
 
+Windows **推荐使用 PowerShell 7 稳定版**。DianStar 的命令工具、剪贴板和右键菜单已迁移到独立安装的 PowerShell 7；不再自动退回 Windows PowerShell 5.1。可通过微软官方安装方式准备：
+
+```powershell
+winget install --id Microsoft.PowerShell --source winget
+pwsh --version
+```
+
+安装后重开终端，输入 `pwsh` 使用7；`powershell.exe`仍属于系统5.1，两者可以并存。也可从[微软官方发布](https://github.com/PowerShell/PowerShell/releases)下载并校验ZIP，解压到 `%LOCALAPPDATA%\Programs\PowerShell\7`。项目优先查找该用户目录，其次 `%ProgramFiles%\PowerShell\7`，再查用户Scoop的 `pwsh/current`；不会复用其他应用私有运行时或项目目录中的同名程序。ZIP安装需自行更新。缺少7时命令和相关UI能力会提示安装，普通对话和文件工具不以此为前提。兼容边界及验收见[PowerShell 7迁移记录](./docs/测试记录-2026-11-05-PowerShell7迁移.md)。
+
 启动后输入 `/config`，在 `api_key` 中设置自己的 Key，再确认该 Key 的默认模型。首次安装预置 `deepseek-flash` 和 `deepseek-v4-pro`；新建 Key 后需在 `model` 中添加模型并选择默认项。配置完成后即可提问，例如：
 
 ```text
@@ -47,7 +56,7 @@ DS
 | 网页权限 | 自然语言提出变更，独立流程处理；明确撤销可直接生效，复杂表达和扩权先确认；网页不能修改授权 |
 | 工具授权 | 所有工具执行前检查能力、参数、范围与额度；本轮授权独立于对话资料，新能力默认拒绝 |
 | Agent 循环 | 每次提问最多 16 轮模型决策，包含最终回答；每批最多 8 个工具，同名同参数可按需重复执行 |
-| 本地项目工具 | 普通目录直接使用 read/glob/grep/edit/write、patch/move、恢复及回收站；原生程序用 workspace_run，Windows 复杂命令用 shell/PowerShell。无需 Git 或 MCP；保留 Hook、只读策略和系统隔离 |
+| 本地项目工具 | 普通目录直接使用 read/glob/grep/edit/write、patch/move、恢复及回收站；原生程序用 workspace_run，Windows 复杂命令用 shell/PowerShell 7，PowerShell 7 的 -Command 调用统一项目目录和输出。无需 Git 或 MCP；保留 Hook、只读策略和系统隔离 |
 | Git 与 GitHub | 本地 Git 默认自动加载并识别当前项目；GitHub 通过 `/github` 登录后自动连接，凭据使用系统凭据库。普通提交发布可一次确认完成暂存、提交、推送及核验；克隆、初始化、分支、恢复、worktree 与当前项目 GitHub 写入/管理按具体操作确认；开发任务中的常规 Python 测试和编译检查可免额外确认，单纯提交推送不自动跑测试，无须先到配置页开启权限 |
 | 来源核验 | 核对引用是否来自工具记录，区分搜索摘要、论文摘要页、网页文本及截断片段；不等同于事实核查 |
 

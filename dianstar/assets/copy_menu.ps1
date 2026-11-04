@@ -5,7 +5,11 @@ $ProgressPreference = 'SilentlyContinue'
 [Console]::OutputEncoding = [System.Text.UTF8Encoding]::new()
 Add-Type -AssemblyName System.Windows.Forms
 Add-Type -AssemblyName System.Drawing
-Add-Type -ReferencedAssemblies System.Windows.Forms,System.Drawing -TypeDefinition @'
+$references = @((Get-ChildItem -LiteralPath (Join-Path $PSHOME 'ref') -Filter '*.dll').FullName)
+$references += @([System.Windows.Forms.Form].Assembly.Location,
+    [System.Drawing.Bitmap].Assembly.Location,
+    (Join-Path $PSHOME 'System.Windows.Forms.Primitives.dll'))
+Add-Type -ReferencedAssemblies $references -TypeDefinition @'
 using System.Drawing;
 using System.Windows.Forms;
 using System;
