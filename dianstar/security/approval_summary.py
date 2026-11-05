@@ -201,6 +201,9 @@ def approval_summary(name, args, description):
             environment_note = ""
             try:
                 saved = json.loads(description).get("会话项目环境", {})
+                audit = json.loads(description).get("命令审计")
+                if audit and (audit.get("status") != "reviewed" or audit.get("decision") != "allow"):
+                    environment_note += "\n\n命令审计要求你确认风险：" + plain(audit.get("reason") or "审计未完成或无法确定安全性，请核对命令和影响范围。")
                 if saved.get("已启用"):
                     environment_note += "\n\n使用当前会话为此项目保存的开发环境（版本 " + plain(saved["版本"]) + "）。"
             except (ValueError, KeyError, TypeError, AttributeError):

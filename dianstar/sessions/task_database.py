@@ -18,6 +18,7 @@ def connect_tasks(directory=None):
             connection.execute("BEGIN IMMEDIATE")
             connection.execute("CREATE TABLE IF NOT EXISTS turns (id TEXT PRIMARY KEY, conversation_id TEXT, created REAL, state TEXT)")
             connection.execute("CREATE TABLE IF NOT EXISTS events (seq INTEGER PRIMARY KEY, turn_id TEXT, payload BLOB NOT NULL)")
+            connection.execute("CREATE TABLE IF NOT EXISTS todo_plans (conversation_id TEXT PRIMARY KEY, revision INTEGER NOT NULL, payload BLOB NOT NULL)")
             connection.execute("CREATE TABLE IF NOT EXISTS command_environments (conversation_id TEXT NOT NULL, "
                 "repository TEXT NOT NULL, revision INTEGER NOT NULL, updated REAL NOT NULL, payload BLOB, "
                 "PRIMARY KEY(conversation_id,repository))")

@@ -3,6 +3,7 @@
 import json
 import asyncio
 import uuid
+from openai import OpenAIError
 from dataclasses import replace
 from pathlib import Path
 from typing import Awaitable, Callable, Mapping
@@ -43,6 +44,8 @@ from dianstar.app.tool_events import ToolEvents
 from dianstar.app.storage_lifecycle import finish_storage
 from dianstar.security.command_audit import CommandAuditor
 from dianstar.providers.command_audit import review_command
+from dianstar.app.task_plan import TaskPlan
+from dianstar.tools.local.todo import registrations as todo_tools
 from dianstar.tools.local.files.io import blocking
 
 
@@ -60,6 +63,8 @@ async def run_turn(
     allow_backend_configuration: bool = False,
     on_tool: Callable[[dict], None] | None = None,
     conversation_id: str | None = None,
+    on_task: Callable[[dict], None] | None = None,
+    on_retry: Callable[[dict], None] | None = None,
 ) -> str:
     """Run one bounded agent task and return the model's final text."""
     if not question.strip():
@@ -98,6 +103,8 @@ async def run_turn(
             return await on_paid_web(request)
     log = None
     workspace = None
+    task_plan = None
+    session = None
     async with client, WebTools(search_settings, env_file, paid if on_paid_web else None, authorization=authorization) as web, \
             MCPTools(active_settings, env_file, authorization, allow_clone=mcp_settings.git_enabled is None,
                      confirm_destinations=mcp_settings.git_write_enabled is None) as mcp:
@@ -111,18 +118,21 @@ async def run_turn(
                 await blocking(lambda cancel: log.append(event))
             workspace.command_audit = CommandAuditor(lambda payload: review_command(client, payload),
                 record_audit, question=question, scanner=workspace.security.scanner)
+            task_plan = TaskPlan(conversation_id, question, workspace.security.scanner, notify=on_task)
             local_settings = projects.settings
             local_registrations = workspace.registrations()
             review = ChangeReview(lambda: workspace, log)
             builtin_registry, act_web = build_local_registry(web, evidence, env_file, search_settings)
             # Built-ins and MCP tools are registered separately, then share one execution gateway.
             tool_registry = dict(builtin_registry)
+            tool_registry.update(todo_tools(task_plan))
             session = DeepSeekSession(
                 client, question, cleaned_history, instructions,
                 [registration.schema for registration in tool_registry.values()],
                 on_stream=on_stream,
                 on_thinking=on_thinking,
                 model=settings.default_model,
+                on_retry=on_retry,
             )
 
             gateway = ToolGateway(authorization, tool_registry, confirm if on_permission else None, policies=migrate_file_policies(tool_policies))
@@ -203,6 +213,7 @@ async def run_turn(
                 notify({**event, "activity": event["title"]})
 
             async def completed(observation):
+                task_plan.observe(observation)
                 review.observe(observation, started_registrations.get(observation.action.call_id))
                 await blocking(lambda cancel: log.append({"event": "completed", "call_id": observation.action.call_id,
                     "tool": observation.action.name, "result": observation.result}))
@@ -294,6 +305,11 @@ async def run_turn(
             tool_registry.update(review.registrations())
             session.tools = gateway.available_schemas()
             previous = log.previous()
+            saved_plan = await task_plan.load()
+            if saved_plan:
+                task_plan.publish(saved_plan)
+                session.application_result(ToolAction("todo_read", {}, "todo_" + uuid.uuid4().hex), {
+                    "plan": saved_plan, "scope": "同会话历史待办，仅供核对；按实际工作用todo_write更新当前步骤与结果。不恢复授权，不自动重做，以当前用户目标为准。"})
             if previous:
                 session.application_result(ToolAction("task_status", {}, "previous_" + uuid.uuid4().hex), {
                     "origin": "application_task_history", "previous_tasks": previous,
@@ -319,7 +335,18 @@ async def run_turn(
                 "reviewed" if review.assessment and review.assessment["decision"] == "keep" else
                 "completed" if review.net_unchanged else
                 "unverified" if review.receipts or review.command_changes else "completed"))
+            await task_plan.finish("budget_exhausted" if budget_exhausted else "waiting")
         except BaseException as error:
+            if isinstance(error, (OpenAIError, TimeoutError, ConnectionError)) and history is not None and session is not None:
+                # Only completed tool-call/result pairs are recorded by Session;
+                # an unfinished streamed decision has never been executed.
+                session.finish_text("模型请求失败，本轮中断。已执行操作需先核对，不自动重复执行。")
+                history.extend(session.messages[len(cleaned_history) + 1:])
+            if task_plan is not None:
+                try:
+                    await task_plan.finish("cancelled" if isinstance(error, asyncio.CancelledError) else "failed")
+                except (ValueError, OSError):
+                    pass  # Preserve the original failure and last durable plan.
             if log is not None:
                 log.finish("cancelled" if isinstance(error, asyncio.CancelledError) else "failed")
             raise

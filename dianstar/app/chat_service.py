@@ -1,11 +1,15 @@
-"""Execute and persist a successful turn independently of its user interface."""
+"""Persist completed turns and explicit model-request interruptions."""
 
 from dianstar.app.runtime import run_turn
 from dianstar.sessions.tool_activity import ToolActivity
+from openai import OpenAIError
+
+
+INTERRUPTED = "模型请求失败，本轮已中断；已执行的操作记录已保存。输入 /retry 继续，先核对现状，不重复执行已完成操作。"
 
 
 async def ask_and_save(question, conversation=None, *, runner=None, **options):
-    """Persist only completed turns; keep tool messages and per-turn reasoning."""
+    """Keep tool evidence for completed turns and recoverable model failures."""
     history = conversation.model_context_messages() if conversation is not None else None
     history_length = len(history) if history is not None else 0
     callback = options.get("on_thinking")
@@ -37,7 +41,15 @@ async def ask_and_save(question, conversation=None, *, runner=None, **options):
         options["on_tool"] = tool_event
     if conversation is not None and (runner is None or runner is run_turn):
         options.setdefault("conversation_id", conversation.id)
-    answer = await (runner or run_turn)(question, history=history, **options)
+    try:
+        answer = await (runner or run_turn)(question, history=history, **options)
+    except (OpenAIError, TimeoutError, ConnectionError):
+        if conversation is not None:
+            tools.interrupt()
+            conversation.add_exchange(question, INTERRUPTED,
+                model_turn_messages=history[history_length:] or None,
+                tool_activity=tools.snapshot() or None, interrupted=True)
+        raise
     if conversation is not None:
         tools.interrupt()
         conversation.add_exchange(

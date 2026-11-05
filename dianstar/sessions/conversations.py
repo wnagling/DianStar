@@ -150,9 +150,11 @@ class Conversation:
 
     def add_exchange(self, question: str, answer: str, *, reasoning_content: str | None = None,
                      model_turn_messages: list[dict[str, object]] | None = None,
-                     tool_activity: list[dict] | None = None) -> None:
+                     tool_activity: list[dict] | None = None, interrupted: bool = False) -> None:
         name = self.name if self.name is not None else _default_name(question)
         assistant_message = {"role": "assistant", "content": answer}
+        if interrupted:
+            assistant_message["interrupted"] = True
         if reasoning_content is not None:
             assistant_message["reasoning_content"] = reasoning_content
         if tool_activity is not None:
@@ -164,7 +166,7 @@ class Conversation:
                     assistant_message]
         model_messages = [*self.model_messages, *(model_turn_messages if model_turn_messages is not None
                                                   else [{"role": "user", "content": question},
-                                                        {key: value for key, value in assistant_message.items() if key != "tool_activity"}])]
+                                                        {key: value for key, value in assistant_message.items() if key not in {"tool_activity", "interrupted"}}])]
         self._save(messages, self.context_start, model_messages, self.model_context_start, name)
         self.messages = messages
         self.model_messages = model_messages

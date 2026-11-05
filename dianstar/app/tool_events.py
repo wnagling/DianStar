@@ -8,6 +8,7 @@ from dianstar.security.approval_summary import GIT_ACTIONS, GITHUB_ACTIONS
 
 
 TITLES = {"read": "读取文件", "glob": "查找文件", "grep": "搜索文件内容", "edit": "修改文件", "write": "创建或写入文件",
+    "todo_read": "读取任务待办", "todo_write": "更新任务待办",
     "workspace_trash_put": "移入回收站", "workspace_trash_list": "查看回收站", "workspace_trash_restore": "恢复回收内容",
     "workspace_trash_purge": "永久清理本机副本", "workspace_storage_recover": "处理未完成的恢复", "workspace_storage_pin": "设置副本保留",
     "workspace_storage_cleanup": "清理到期副本", "workspace_scratch_create": "准备临时工作区", "workspace_scratch_open": "打开临时工作区",

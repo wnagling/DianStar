@@ -25,6 +25,7 @@ from .process_runner import run_process
 class CommandTools:
     def __init__(self, context):
         self.context, self.prepared = context, {}
+        self.audits = {}
 
     def prepare_command(self, argv, root, *, environment=None):
         self.context.security.run("before_command", [("command", json.dumps(argv, ensure_ascii=False).encode())])
@@ -154,16 +155,24 @@ class CommandTools:
                 "security_review": await blocking(lambda cancel: audit.review(baseline))}
 
     async def preview(self, args, name="workspace_run"):
+        binding = request_key(name, args)
+        self.prepared.pop(binding, None)
+        self.audits.pop(binding, None)
         try:
             state = await blocking(lambda cancel: self.prepare(name, args))
             if getattr(self.context, "command_audit", None) is not None:
-                await self.context.command_audit(name, args, state)
+                audit = await self.context.command_audit(name, args, state)
+                if audit is not None:
+                    self.audits[binding] = audit
+                    if audit.get("status") == "reviewed" and audit.get("decision") == "deny":
+                        raise ToolPreparationError("command_audit_denied", "命令审计拒绝执行：" + audit.get("reason", "操作风险过高。"))
             self.prepared[request_key(name, args)] = (time.monotonic(), state)
             return json.dumps({"操作": "运行项目命令", "目录": args["repository"], "参数数组": state["argv"],
                 "本次构建环境": args.get("environment", {}),
                 "会话项目环境": {"已启用": state["project_environment_configured"], "版本": state["project_environment_revision"]},
                 "环境作用范围": "本次覆盖优先，其次当前会话项目环境，最后宿主公开环境；不修改系统配置。",
                 "超时秒数": args.get("timeout_seconds", 120), "允许互联网": args.get("network", False),
+                "命令审计": self.audits.get(binding),
                 "说明": "Windows 使用应用容器，项目及专用临时目录可写；既有凭据配置受保护，工具链只读，无提权或无限制后备。"}, ensure_ascii=False)
         except SecurityViolation as error:
             raise ToolPreparationError(error.code, error.message, findings=error.result()["findings"]) from None
@@ -217,6 +226,7 @@ class CommandTools:
             return {}
         schema = {"type": "function", "function": {"name": "workspace_run", "description":
             "在项目中执行任务范围内的命令；常规验证按后台策略免额外确认，单纯提交推送不附加测试。"
+            "风险审计拒绝时不执行，需确认或未完成时必须用户审批；通过不能扩大原权限。"
             "Windows PowerShell 7的-Command单一脚本文本与shell统一处理目录和输出；仅支持NoLogo/NoProfile/NonInteractive和OutputFormat选项，不支持-File、交互或编码启动。",
             "parameters": {"type": "object", "properties": {"repository": {"type": "string"},
                 "argv": {"type": "array", "items": {"type": "string"}, "minItems": 1, "maxItems": 100},
@@ -226,6 +236,7 @@ class CommandTools:
         bash = {"type": "function", "function": {"name": "bash", "description":
             "在已接入项目中运行非交互 Bash 命令，Windows 使用 Git Bash；支持管道和条件执行，默认 pipefail，不加载用户启动配置。"
             "适合测试/构建/任务命令；文件读写优先专用工具。常规单条验证按后台策略免额外确认，复杂脚本需确认。"
+            "风险审计拒绝时不执行，需确认或未完成时必须用户审批。"
             "每次启动新进程，cd/export/激活状态不跨调用保留；自动复用当前会话项目环境，environment 可仅覆盖本次。"
             "找不到程序先区分未安装与PATH/激活问题，不自行安装。Windows安装不使用Linux包管理命令。"
             "使用前台命令，不启动后台服务；最长600秒，输出有界，超时/取消清理进程树。隔离后端不可用时停止，不无限制执行；命令写入不提供文件工具自动回滚。",
@@ -238,7 +249,7 @@ class CommandTools:
         shell = {"type": "function", "function": {"name": "shell", "description":
             "在 Windows 项目中运行受应用容器隔离的非交互 PowerShell 7 命令，请使用PowerShell 7语法和对应的.NET API。"
             "只允许写当前项目及专用临时目录，既有敏感配置和 Git 元数据禁止命令写入；默认不能联网。"
-            "简单程序调用优先 workspace_run，文件读写优先专用工具。执行前仍按后台策略确认；没有无限制运行后备。",
+            "简单程序调用优先 workspace_run，文件读写优先专用工具。风险审计拒绝时不执行，需确认或未完成时必须用户审批；通过仍遵守原策略。没有无限制运行后备。",
             "parameters": bash["function"]["parameters"]}}
         for definition in ((schema, shell) if os.name == "nt" else (schema, bash)):
             name = definition["function"]["name"]
@@ -247,7 +258,11 @@ class CommandTools:
             def automatic(args, name=name):
                 item = self.prepared.get(request_key(name, args))
                 return bool(item and not args.get("network", False) and any(item[1].get(key) for key in ("routine_validation", "routine_inspection", "requested_task_command")))
+            def force_approval(args, name=name):
+                audit = self.audits.get(request_key(name, args))
+                return bool(audit is not None and (audit.get("status") != "reviewed" or audit.get("decision") != "allow"))
             result[name] = ToolRegistration(definition, "workspace.write", self.apply, preview, auto_approve=automatic,
+                force_approval=force_approval,
                 required_tools=("workspace_run",) if name in {"bash", "shell"} else (), effects=("project.command",),
                 policy_aliases=("bash",) if name == "shell" else ())
         return result

@@ -4,6 +4,7 @@ from dianstar.sessions.conversations import Conversation, list_conversations
 
 
 COMMANDS = {
+    "/retry": "继续上次因模型请求失败而中断的任务，先核对已有操作",
     "/help": "显示命令帮助",
     "/config": "配置 API Key、模型、快捷键和 GitHub 账号",
     "/github": "登录、检查或退出 GitHub 账号",
@@ -14,6 +15,17 @@ COMMANDS = {
     "/compress": "清空后续请求的上下文，保留聊天记录",
     "/exit": "退出",
 }
+
+
+def retry_question(current):
+    if not current.messages or current.messages[-1].get("interrupted") is not True:
+        raise ValueError("当前会话没有可重试的模型请求失败记录。")
+    original = current.messages[-2]["content"]
+    if original.startswith("继续上次因模型请求失败而中断的任务。"):
+        original = original.split("\n原始目标：\n", 1)[-1]
+    return ("继续上次因模型请求失败而中断的任务。先查看已有工具结果和任务记录，核对当前文件及外部状态；"
+            "不要重复创建、覆盖、提交或发送已经完成的操作。旧审批不恢复，新操作仍按原策略确认。\n原始目标：\n"
+            + original)
 
 
 class AmbiguousConversation(ValueError):

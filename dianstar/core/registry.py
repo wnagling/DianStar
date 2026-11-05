@@ -23,3 +23,5 @@ class ToolRegistration:
     resources: Callable[[ToolAction], tuple] | None = None
     # Renamed/replacement tools retain explicit backend restrictions.
     policy_aliases: tuple[str, ...] = ()
+    # Trusted preflight can require a prompt even when defaults/policies waive it.
+    force_approval: Callable[[dict], bool] | None = None

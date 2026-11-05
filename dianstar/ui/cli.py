@@ -55,7 +55,8 @@ def _answer(question: str, conversation: Conversation | None = None) -> bool:
                 count += 1
                 print(f"已完成 {count} 项操作" + ("，正在核对修改。" if event["tool"] in {"review_changes", "record_review"} else "。"), file=sys.stderr)
         answer = asyncio.run(ask_and_save(question, conversation, runner=run_turn, on_paid_web=approval,
-            on_permission=approve_permission if approval is not None else None, on_tool=progress))
+            on_permission=approve_permission if approval is not None else None, on_tool=progress,
+            on_retry=lambda event: print(event["message"], file=sys.stderr)))
     except ValueError as error:
         print(f"错误：{error}", file=sys.stderr)
         return False
@@ -65,7 +66,7 @@ def _answer(question: str, conversation: Conversation | None = None) -> bool:
     except TimeoutError:
         print("错误：DeepSeek 在 60 秒内未响应。", file=sys.stderr)
         return False
-    except APIConnectionError:
+    except (APIConnectionError, ConnectionError):
         print("错误：无法连接 DeepSeek，请检查网络后重试。", file=sys.stderr)
         return False
     except APIStatusError as error:
@@ -129,7 +130,7 @@ def main() -> int:
 
     print(f"会话 ID：{conversation.id}")
     print(f"当前会话：{conversation.name or '未命名'}（ID：{conversation.id}）")
-    print("指令：/new、/rename 新名称、/resume 会话名、/switch、/compress、/config、/github、/exit。")
+    print("指令：/new、/rename 新名称、/resume 会话名、/switch、/compress、/retry、/config、/github、/exit。")
     while True:
         try:
             question = input("主包> ").strip()
@@ -140,7 +141,7 @@ def main() -> int:
             break
         try:
             if question == "/help":
-                print("指令：/help、/new、/rename 新名称、/resume 会话名、/switch、/compress、/config、/github、/exit。")
+                print("指令：/help、/new、/rename 新名称、/resume 会话名、/switch、/compress、/retry、/config、/github、/exit。")
                 continue
             if question == "/config":
                 print("配置界面在 TUI 中使用；运行 python -m dianstar 后输入 /config。")
@@ -220,8 +221,16 @@ def main() -> int:
                 commands.compress_conversation(conversation)
                 print("后续请求的上下文已清空；聊天记录仍保存在当前会话中。")
                 continue
+            if question == "/retry":
+                try:
+                    retry = commands.retry_question(conversation)
+                except ValueError as error:
+                    print(str(error))
+                else:
+                    _answer(retry, conversation)
+                continue
             if question.startswith("/"):
-                print("未知指令。可用指令：/new、/rename、/resume、/switch、/compress、/config、/github、/exit。")
+                print("未知指令。可用指令：/new、/rename、/resume、/switch、/compress、/retry、/config、/github、/exit。")
                 continue
             if question:
                 _answer(question, conversation)

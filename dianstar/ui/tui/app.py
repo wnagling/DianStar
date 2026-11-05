@@ -10,7 +10,7 @@ from openai import APIConnectionError, APIStatusError, APITimeoutError, OpenAIEr
 from textual.actions import SkipAction
 from textual.app import App, ComposeResult
 from textual.binding import Binding
-from textual.containers import Horizontal, Vertical
+from textual.containers import Horizontal, Vertical, VerticalScroll
 from textual.events import MouseDown, Resize
 from textual.screen import ModalScreen, Screen
 from textual.widgets import Button, Label, ListItem, ListView, Static, TextArea
@@ -34,9 +34,10 @@ from dianstar.config.search import load_search_settings, save_search_settings
 
 from dianstar.ui.tui.widgets import ChatLog, CopyMenu, ChatScreen, ChatInput
 from dianstar.ui.tui.chat_view import ChatView
+from dianstar.ui.tui.task_view import TaskView
 
 
-class DianStarApp(ChatView, App[None]):
+class DianStarApp(TaskView, ChatView, App[None]):
     """使用 Textual 绘制的本地聊天界面。"""
 
     TITLE = "DianStar"
@@ -44,6 +45,13 @@ class DianStarApp(ChatView, App[None]):
     Screen { layout: vertical; background: $surface; layers: base context-menu; }
     #toolbar { height: 1; padding: 0 1; }
     #toggle-sessions { height: 1; width: auto; min-width: 12; border: none; padding: 0 1; }
+    #toggle-todo { display: none; height: 1; width: auto; min-width: 14; border: none; padding: 0 1; margin-left: 2; }
+    #todo-pane { display: none; width: 30%; min-width: 26; max-width: 45; height: 1fr; border-left: solid $primary; padding: 1 2; scrollbar-size-vertical: 1; }
+    #todo-heading { height: 2; color: $primary; text-style: bold; }
+    #todo-title { height: auto; margin-bottom: 1; }
+    #todo-summary { height: auto; color: $text-muted; margin-bottom: 1; }
+    #todo-steps { height: auto; }
+    #todo-note { height: auto; color: $text-muted; }
     #body { height: 1fr; }
     #sessions { display: none; width: 25; min-width: 18; border-right: solid $primary; }
     #sessions-title { height: 1; padding: 0 1; color: $text-muted; }
@@ -69,6 +77,9 @@ class DianStarApp(ChatView, App[None]):
         self.config_file = config_file
         self.env_file = env_file
         self.busy = False
+        self._task_plan = None
+        self._todo_hidden = False
+        self._todo_mobile_open = False
         self._tool_pending = set()
         self._tool_finished = 0
         self._tool_activities = {}
@@ -185,6 +196,7 @@ class DianStarApp(ChatView, App[None]):
     def compose(self) -> ComposeResult:
         with Horizontal(id="toolbar"):
             yield Button("显示会话", id="toggle-sessions")
+            yield Button("待办", id="toggle-todo")
         with Horizontal(id="body"):
             with Vertical(id="sessions"):
                 yield Static("会话 · 最近使用", id="sessions-title")
@@ -198,6 +210,12 @@ class DianStarApp(ChatView, App[None]):
                 with Horizontal(id="bottom"):
                     yield Static("", id="key-help")
                     yield Label("", id="session-name")
+            with VerticalScroll(id="todo-pane"):
+                yield Static("任务待办", id="todo-heading")
+                yield Static("", id="todo-title")
+                yield Static("", id="todo-summary")
+                yield Static("", id="todo-steps")
+                yield Static("按实际结果更新进度\n历史进度继续前需核对", id="todo-note")
         yield CopyMenu(id="copy-menu")
 
     async def on_mount(self) -> None:
@@ -207,6 +225,7 @@ class DianStarApp(ChatView, App[None]):
         self._refresh_key_help()
         await self._refresh_sessions()
         self._render_history()
+        await self._load_task_plan()
         if self._welcome_only:
             self.call_after_refresh(self._refresh_welcome)
         self.query_one("#input", ChatInput).focus()
@@ -223,6 +242,8 @@ class DianStarApp(ChatView, App[None]):
     def on_resize(self, event: Resize) -> None:
         if self.is_mounted:
             self._close_copy_menu()
+            self._todo_mobile_open = False
+            self.call_after_refresh(self._render_task_plan)
         if self._welcome_only:
             self.call_after_refresh(self._refresh_welcome)
 
@@ -300,6 +321,8 @@ class DianStarApp(ChatView, App[None]):
         elif event.button.id == "toggle-sessions":
             self.action_toggle_sessions()
             self.query_one("#input", ChatInput).focus()
+        elif event.button.id == "toggle-todo":
+            self._toggle_todo()
 
     async def _refresh_sessions(self) -> None:
         view = self.query_one("#session-list", ListView)
@@ -319,6 +342,7 @@ class DianStarApp(ChatView, App[None]):
         try:
             self.conversation = Conversation.load(conversation_id, self.conversation.directory)
             self._render_history()
+            await self._load_task_plan()
             await self._refresh_sessions()
             self._status(f"已切换到 {self.conversation.name or '未命名会话'}")
             self.query_one("#input", ChatInput).focus()
@@ -379,6 +403,9 @@ class DianStarApp(ChatView, App[None]):
         def tool_event(event):
             if self._tool_epoch is epoch and self.conversation is conversation:
                 self._tool_progress(event)
+        def task_event(event):
+            if self._tool_epoch is epoch and self.conversation is conversation:
+                self._task_progress(event)
         self._tool_pending.clear()
         self._tool_finished = 0
         self._tool_activities.clear()
@@ -389,6 +416,8 @@ class DianStarApp(ChatView, App[None]):
                 env_file=self.env_file, on_paid_web=self._approve_paid_web,
                 on_permission=self._approve_permission,
                 on_tool=tool_event,
+                on_task=task_event,
+                on_retry=lambda event: self._status(event["message"]),
             )
             self._paint_thinking()
             self._finish_answer(answer)
@@ -400,9 +429,9 @@ class DianStarApp(ChatView, App[None]):
             self._status("本轮已取消；已经执行的操作请以工具记录为准。")
             raise
         except (APITimeoutError, TimeoutError):
-            self._status("DeepSeek 在 60 秒内未响应，请重试。")
-        except APIConnectionError:
-            self._status("无法连接 DeepSeek，请检查网络后重试。")
+            self._status("模型请求重试后仍超时，输入 /retry 继续；已执行操作不会自动重放。")
+        except (APIConnectionError, ConnectionError):
+            self._status("模型连接重试后仍失败，请检查网络后输入 /retry。")
         except APIStatusError as error:
             self._status("API Key 被拒绝（HTTP 401）。" if error.status_code == 401 else f"DeepSeek 返回 HTTP {error.status_code}。")
         except (ValueError, OpenAIError, OSError) as error:
@@ -414,6 +443,7 @@ class DianStarApp(ChatView, App[None]):
             self._reset_active_thinking()
             self._stream_answer("")
             self.busy = False
+            self._render_task_plan()
             self.query_one("#input", ChatInput).focus()
 
     def _tool_progress(self, event):
@@ -480,8 +510,18 @@ class DianStarApp(ChatView, App[None]):
             elif command == "/new":
                 self.conversation = commands.new_conversation(self.conversation)
                 self._render_history()
+                await self._load_task_plan()
                 await self._refresh_sessions()
                 self._status("已创建新会话。")
+            elif command == "/retry":
+                if argument:
+                    self._status("直接输入 /retry 继续上次中断任务，无需附加参数。")
+                    return
+                question = commands.retry_question(self.conversation)
+                self.busy = True
+                self._show_message("user", "/retry")
+                self._status("正在恢复上次进度，先核对已执行操作…")
+                self.run_worker(self._ask(question), exclusive=True)
             elif command == "/rename":
                 if not argument:
                     self._status("输入 /rename 新名称")

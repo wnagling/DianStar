@@ -88,6 +88,9 @@ class ToolGateway:
         # Freeze the checked arguments before any await; handlers receive this copy.
         checked = json.loads(json.dumps(action.arguments, ensure_ascii=False))
         error = self.authorization.reserve(registration.capability, action.name, checked)
+        if error is None and registration.force_approval is not None:
+            # Even a pre-granted capability must pass this tool's fresh preflight.
+            error = {"error": "authorization_required", "message": "操作需重新核对。"}
         binding = request_key(action.name, checked)
         if (error and error["error"] == "authorization_required"
                 and registration.approval_description is not None
@@ -116,6 +119,14 @@ class ToolGateway:
                 except Exception:
                     return Observation(action, {"error": "tool_preparation_failed"})
                 requires_approval = not automatic
+            if registration.force_approval is not None:
+                try:
+                    forced = registration.force_approval(dict(checked))
+                    if type(forced) is not bool:
+                        raise ValueError("Invalid forced approval decision")
+                    requires_approval = requires_approval or forced
+                except Exception:
+                    return Observation(action, {"error": "tool_preparation_failed"})
             if requires_approval:
                 if self.request_approval is None:
                     return Observation(action, error)

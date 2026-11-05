@@ -20,7 +20,7 @@ class Authorization:
     """One object per user request. Never deserialize grants from chat history."""
 
     DEFAULT_LIMITS = {"calculate": 64, "weather.read": 30,
-                      "web.search": 60, "web.read": 60, "permissions.read": 16}
+                      "web.search": 60, "web.read": 60, "permissions.read": 16, "task.progress": 32}
 
     def __init__(self):
         self.request_id = uuid.uuid4().hex

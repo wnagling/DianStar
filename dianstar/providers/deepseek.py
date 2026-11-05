@@ -16,6 +16,7 @@ from dianstar.config.paths import ENV_FILE, PROJECT_ROOT
 from dianstar.config.credentials import read_api_key
 from dianstar.core.types import Observation, ToolAction
 from dianstar.security.validation import valid_arguments
+from .retries import model_request, IncompleteResponseError
 
 
 def _decoded_arguments_valid(schema, arguments):
@@ -142,6 +143,7 @@ class DeepSeekSession:
         on_stream: Callable[[str], None] | None = None,
         on_thinking: Callable[[str], None] | None = None,
         model: str = MODEL,
+        on_retry=None,
     ) -> None:
         self.client = client
         self.question = question
@@ -151,6 +153,7 @@ class DeepSeekSession:
         self.on_stream = on_stream
         self.on_thinking = on_thinking
         self.model = model
+        self.on_retry = on_retry
         self.messages = [
             {"role": "system", "content": instructions},
             *history,
@@ -188,12 +191,12 @@ class DeepSeekSession:
                 tool_choice="none" if force_text_retry else "auto",
                 extra_body={"thinking": {"type": "enabled"}},
             )
-            if self.on_stream is None:
-                response = await asyncio.wait_for(
-                    self.client.chat.completions.create(**request, stream=False), timeout=60.0,
-                )
-            else:
-                response = await self._stream_completion(request)
+            async def request_once():
+                if self.on_stream is None:
+                    return await asyncio.wait_for(
+                        self.client.chat.completions.create(**request, stream=False), timeout=60.0)
+                return await self._stream_completion(request)
+            response = await model_request(request_once, self.on_retry)
             if not response.choices:
                 raise ValueError("DeepSeek returned no answer.")
             choice = response.choices[0]
@@ -261,10 +264,15 @@ class DeepSeekSession:
         reasoning_parts: list[str] = []
         calls: dict[int, dict[str, str]] = {}
         finish_reason: str | None = None
-        async with asyncio.timeout(60.0):
+        async with asyncio.timeout(180.0):
             stream = await self.client.chat.completions.create(**request, stream=True)
             try:
-                async for chunk in stream:
+                iterator = stream.__aiter__()
+                while True:
+                    try:
+                        chunk = await asyncio.wait_for(anext(iterator), timeout=60.0)
+                    except StopAsyncIteration:
+                        break
                     if not chunk.choices:
                         continue
                     choice = chunk.choices[0]
@@ -294,8 +302,11 @@ class DeepSeekSession:
                             self.on_stream("")
                     if choice.finish_reason is not None:
                         finish_reason = choice.finish_reason
+                        break
             finally:
                 await stream.close()
+        if finish_reason is None:
+            raise IncompleteResponseError("Model stream ended without a final marker")
         content = "".join(content_parts) or None
         if finish_reason != "stop" or _is_unparsed_tool_call(content):
             self.on_stream("")
