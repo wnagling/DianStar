@@ -1,5 +1,6 @@
 """Early rejection of explicit machine administration; the OS boundary is separate."""
 import json
+import ntpath
 from pathlib import PureWindowsPath
 import re
 import shlex
@@ -41,6 +42,12 @@ def _check(argv, depth=0):
     if name in {"rm", "rmdir", "rd", "del", "erase", "remove-item"}:
         for item in args:
             clean = item.strip("\"'").replace("\\", "/").casefold()
+            # Normalize Windows separators and dot segments before matching;
+            # c:// and c:/safe/.. must receive the same denial as c:/.
+            if re.match(r"^[a-z]:/", clean):
+                clean = ntpath.normpath(clean).replace("\\", "/")
+            else:
+                clean = re.sub(r"/+", "/", clean)
             if (re.fullmatch(r"(?:[a-z]:/?|/[a-z]/?|/|/[a-z]/\*|[a-z]:/\*)", clean)
                     or re.match(r"^(?:[a-z]:|/[a-z])/(?:windows|program files(?: \(x86\))?|programdata|boot|efi|recovery)(?:/|$)", clean)):
                 raise HostSafetyError("禁止删除磁盘根目录、系统、驱动或程序安装目录。", "dangerous_command_denied")

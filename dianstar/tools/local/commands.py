@@ -156,6 +156,8 @@ class CommandTools:
     async def preview(self, args, name="workspace_run"):
         try:
             state = await blocking(lambda cancel: self.prepare(name, args))
+            if getattr(self.context, "command_audit", None) is not None:
+                await self.context.command_audit(name, args, state)
             self.prepared[request_key(name, args)] = (time.monotonic(), state)
             return json.dumps({"操作": "运行项目命令", "目录": args["repository"], "参数数组": state["argv"],
                 "本次构建环境": args.get("environment", {}),

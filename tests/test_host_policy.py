@@ -15,6 +15,14 @@ from dianstar.security.content_guard import ContentScanner
 
 
 class HostPolicyTests(unittest.TestCase):
+    def test_delete_root_variants_and_multiple_targets_are_denied_without_execution(self):
+        for command in ('rm -rf c:// user', 'rm -rf ./fixture C:////',
+                        'rm -rf C:/fixture/..', 'Remove-Item -Recurse "C:\\\\"',
+                        'rm -rf c://Windows/System32', 'rm -rf C:/fixture/../Windows'):
+            with self.subTest(command=command), self.assertRaises(HostSafetyError):
+                inspect_command("powershell", command.encode())
+        inspect_command("powershell", b"rm -rf ./fixture-output")
+
     def test_administration_wrappers_and_broker_commands_are_denied_without_execution(self):
         for command in ("Start-Service fixture-service", "Set-ExecutionPolicy Bypass", "Unregister-ScheduledTask fixture",
                         "cmd /c diskpart", "& pnputil /delete-driver fixture.inf", "wsl --exec sh", "docker run fixture",

@@ -14,9 +14,11 @@ from dianstar.security.system_paths import check_host_path
 
 
 class WorkspaceTools:
-    def __init__(self, projects, env_file, *, conversation_id=None, task_scope=None, storage_manager=None):
+    def __init__(self, projects, env_file, *, conversation_id=None, task_scope=None, storage_manager=None,
+                 command_audit=None):
         self.projects, self.env_file = projects, env_file
         self.task_scope = task_scope
+        self.command_audit = command_audit
         self.security = HookRunner(ContentScanner(known=known_credentials(env_file,
             extra=projects.credentials())))
         self.files = FileRecovery(self)

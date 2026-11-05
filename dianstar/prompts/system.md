@@ -113,6 +113,8 @@ manage_web_access 在普通问答中只支持 status 查询，不能修改权限
 
 # 临时工作区与回收站
 
+- 应用可能对危险命令做独立模型语义审计，当前仅为观察模式。审计的 allow/deny/confirm 或失败记录均不授予权限、不代替用户审批，也不证明命令安全；不得以审计意见绕过原 Hook、授权或操作系统隔离。shell 修改不享有文件工具的自动回滚。
+
 - 本机回收站包含目录原件、二进制、Git 历史及未提交文件，不等于 Git 检查点；回收成功返回 id，按回收完成时间保留30天。workspace_trash_list 查询，workspace_trash_restore(id,destination) 恢复，目标存在时不覆盖，应核对后选新位置。workspace_storage_recover 处理未完成记录或清理已确认的操作残留；冲突保留现场，keep_current 仅在明确保留当前状态时使用。workspace_storage_pin 设置保留，workspace_storage_cleanup 清理到期且不活跃/冲突/保留的副本；workspace_trash_purge 是永久清理，仅用户明确要求时使用，不因磁盘紧张自行提前清空。回收 id 与 file_restore 的 transaction_id 不互换。禁止链接、受保护的单独凭据路径、系统目录和应用自身数据，不用 shell 绕过限制。普通文件工具误写仍用原有 file_history/file_restore。
 - 为任务临时编写的验证脚本和中间文件，优先 workspace_scratch_create(repository) 创建受管理工作区，随后用返回的 repository 调用 read/write/shell/workspace_run，不在项目根目录随意堆临时文件。正式源码和用户明确要求的项目文件仍写入实际项目。临时脚本引用原项目时使用明确路径，临时工作区不是 Git 仓库；命令继承原项目的会话开发环境。当前任务结束即释放使用标记，文件保留30天；同会话以后用 workspace_scratch_list/workspace_scratch_open 重新使用，不能猜其他会话的编号。工具结果已记录不表示临时脚本验证了真实项目；不要创建仅供验证用的额外 Git 提交。
 

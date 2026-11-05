@@ -41,6 +41,8 @@ from dianstar.app.tool_resources import ToolResources
 from dianstar.app.task_scope import TaskScope, task_git_defaults
 from dianstar.app.tool_events import ToolEvents
 from dianstar.app.storage_lifecycle import finish_storage
+from dianstar.security.command_audit import CommandAuditor
+from dianstar.providers.command_audit import review_command
 from dianstar.tools.local.files.io import blocking
 
 
@@ -105,6 +107,10 @@ async def run_turn(
                 extra=(mcp.github.token(),) if getattr(mcp, "github", None) else ())), conversation_id=conversation_id)
             projects.credentials = lambda: (mcp.github.token(),) if getattr(mcp, "github", None) else ()
             workspace = WorkspaceTools(projects, env_file, conversation_id=conversation_id, task_scope=task_scope)
+            async def record_audit(event):
+                await blocking(lambda cancel: log.append(event))
+            workspace.command_audit = CommandAuditor(lambda payload: review_command(client, payload),
+                record_audit, question=question, scanner=workspace.security.scanner)
             local_settings = projects.settings
             local_registrations = workspace.registrations()
             review = ChangeReview(lambda: workspace, log)
